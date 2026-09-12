@@ -3,7 +3,7 @@ import json
 import zipfile
 
 base_dir = r"C:\Users\ADMIN\.gemini\antigravity\scratch\ai_3d_engine"
-version = "1.3.0"
+version = "1.4.0"
 
 out_zip = os.path.join(base_dir, f"update_v{version}.zip")
 with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as zf:

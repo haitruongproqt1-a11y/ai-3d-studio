@@ -29,7 +29,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.3.0"
+APP_VERSION = "v1.4.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -51,7 +51,7 @@ def detect_hardware():
                 "name": gpu_name,
                 "vram_gb": total_vram_gb,
                 "preset": preset,
-                "status_text": f"GPU: NVIDIA {gpu_name} ({total_vram_gb} GB)",
+                "status_text": f"NVIDIA {gpu_name} ({total_vram_gb} GB)",
                 "recommendation": "GPU Sẵn sàng - Hỗ trợ làm mịn bề mặt & Texture Atlas"
             }
         except Exception:
@@ -65,7 +65,7 @@ def detect_hardware():
         "name": f"CPU ({cpu_count} luồng)",
         "vram_gb": 0,
         "preset": "cpu_fallback",
-        "status_text": f"Chế độ CPU ({cpu_count} luồng) - Máy yếu",
+        "status_text": f"Chế độ CPU ({cpu_count} luồng)",
         "recommendation": "Tự động kích hoạt cấu hình siêu nhẹ tránh đơ máy"
     }
 
@@ -78,7 +78,7 @@ def load_ai_model():
     try:
         logging.info(f"Loading TripoSR model on {current_device}...")
         model = TSR.from_pretrained("stabilityai/TripoSR", config_name="config.yaml", weight_name="model.ckpt")
-        chunk_size = 8192 if (current_device.startswith("cuda") and HARDWARE_INFO.get("vram_gb", 0) >= 5.5) else (2048 if current_device.startswith("cuda") else 1024)
+        chunk_size = 65536 if (current_device.startswith("cuda") and HARDWARE_INFO.get("vram_gb", 0) >= 5.5) else (16384 if current_device.startswith("cuda") else 1024)
         model.renderer.set_chunk_size(chunk_size)
         model.to(current_device)
         logging.info("Model loaded successfully!")
@@ -107,15 +107,15 @@ def save_config(cfg):
 
 # ============ PBR & TEXTURE ENHANCEMENT ENGINE ============
 def enhance_texture_vibrancy(tex_img):
-    """Enhance texture saturation and sharpness so it pops like real life"""
+    """Enhance texture saturation, contrast, and sharpness for photorealism"""
     try:
-        # Boost color saturation by 25% to fix washed out AI colors
+        # Boost color saturation to make colors vibrant and realistic
         enhancer = ImageEnhance.Color(tex_img)
-        tex_img = enhancer.enhance(1.25)
+        tex_img = enhancer.enhance(1.22)
         # Boost contrast slightly
         con_enhancer = ImageEnhance.Contrast(tex_img)
-        tex_img = con_enhancer.enhance(1.10)
-        # Unsharp mask for crisp details
+        tex_img = con_enhancer.enhance(1.08)
+        # Unsharp mask for crisp high-frequency details
         tex_img = tex_img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=3))
     except Exception as e:
         logging.warning(f"Texture enhance skipped: {e}")
@@ -187,25 +187,30 @@ class AppApi:
                 return {"error": str(e)}
         return None
 
-    def clean_checkerboard_mask(self, img_path):
-        img = cv2.imread(img_path)
-        if img is None:
-            return Image.open(img_path)
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        chair_mask = (s > 28) & (v > 25)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        chair_mask = cv2.morphologyEx(chair_mask.astype(np.uint8) * 255, cv2.MORPH_CLOSE, kernel)
-        mask_ratio = np.sum(chair_mask > 0) / (chair_mask.shape[0] * chair_mask.shape[1])
-        if 0.04 < mask_ratio < 0.92:
-            rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-            rgba[:, :, 3] = chair_mask
-            return Image.fromarray(cv2.cvtColor(rgba, cv2.COLOR_BGRA2RGBA))
-        else:
-            return Image.open(img_path)
+    def preprocess_image(self, file_path):
+        """Intelligently cleans background without destroying white/gray object details"""
+        orig_img = Image.open(file_path)
+        # Check if already transparent PNG
+        if orig_img.mode in ("RGBA", "LA"):
+            alpha = np.array(orig_img)[:, :, -1]
+            if (alpha < 240).any() and (alpha > 15).any():
+                logging.info("Using existing transparent mask from input image")
+                image = resize_foreground(orig_img, 0.85)
+                image_np = np.array(image).astype(np.float32) / 255.0
+                image_np = image_np[:, :, :3] * image_np[:, :, 3:4] + (1 - image_np[:, :, 3:4]) * 0.5
+                return Image.fromarray((image_np * 255.0).astype(np.uint8))
+        
+        # Use AI background removal (rembg)
+        logging.info("Running AI Background Removal (rembg)...")
+        rgb_img = orig_img.convert("RGB")
+        image = remove_background(rgb_img)
+        image = resize_foreground(image, 0.85)
+        image_np = np.array(image).astype(np.float32) / 255.0
+        image_np = image_np[:, :, :3] * image_np[:, :, 3:4] + (1 - image_np[:, :, 3:4]) * 0.5
+        return Image.fromarray((image_np * 255.0).astype(np.uint8))
 
     # ======== GENERATE 3D (DUAL ENGINE WITH PBR REALISM) ========
-    def generate_3d(self, file_path, engine="cloud_free", mc_resolution=None, bake_texture_flag=None, smooth_mesh=True, quality="max"):
+    def generate_3d(self, file_path, engine="local", mc_resolution=None, bake_texture_flag=None, smooth_mesh=True, quality="max"):
         if engine == "cloud_free":
             return self._generate_cloud_free(file_path, quality)
         else:
@@ -223,18 +228,7 @@ class AppApi:
             if bake_texture_flag is None:
                 bake_texture_flag = True if HARDWARE_INFO["has_gpu"] else False
 
-            cleaned_img = self.clean_checkerboard_mask(file_path)
-            
-            if cleaned_img.mode == "RGBA":
-                raw_np = np.array(cleaned_img).astype(np.float32) / 255.0
-                image_np = raw_np[:, :, :3] * raw_np[:, :, 3:4] + (1 - raw_np[:, :, 3:4]) * 0.5
-                image = Image.fromarray((image_np * 255.0).astype(np.uint8))
-            else:
-                image = remove_background(cleaned_img)
-                image = resize_foreground(image, 0.85)
-                image_np = np.array(image).astype(np.float32) / 255.0
-                image_np = image_np[:, :, :3] * image_np[:, :, 3:4] + (1 - image_np[:, :, 3:4]) * 0.5
-                image = Image.fromarray((image_np * 255.0).astype(np.uint8))
+            image = self.preprocess_image(file_path)
 
             timestamp = int(time.time())
             item_dir = os.path.join(OUTPUT_DIR, str(timestamp))
@@ -246,10 +240,10 @@ class AppApi:
 
             meshes = model.extract_mesh(scene_codes, not bake_texture_flag, resolution=int(mc_resolution))
             
-            # Surface Taubin Smoothing
+            # Surface Taubin Smoothing to eliminate bumpy artifacts
             if smooth_mesh:
                 try:
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=10)
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=12)
                 except Exception as e:
                     logging.warning(f"Smoothing skipped: {e}")
 
@@ -298,7 +292,7 @@ class AppApi:
                 "glb_path": out_glb_path,
                 "obj_path": out_obj_path,
                 "folder": item_dir,
-                "engine_used": f"Local GPU (RTX 3050 + PBR Texture Booster)"
+                "engine_used": f"Local GPU (NVIDIA RTX 3050 + PBR Texture Booster)"
             }
         except Exception as e:
             logging.exception("Error in _generate_local")
@@ -320,8 +314,8 @@ class AppApi:
                 api_name="/preprocess"
             )
             
-            # Step 2: Multi-View (Higher steps = much higher fidelity!)
-            steps = 75 if quality == "max" else 45
+            # Step 2: Multi-View (Optimal 30-35 steps within ZeroGPU 60s limit)
+            steps = 32 if quality == "max" else 22
             logging.info(f"Generating Multi-views with {steps} sample steps...")
             client.predict(
                 input_image=handle_file(prep_res),
@@ -347,9 +341,8 @@ class AppApi:
             try:
                 tm = trimesh.load(local_glb)
                 if hasattr(tm, 'visual') and hasattr(tm.visual, 'material'):
-                    # Set realistic roughness for organic objects
                     if hasattr(tm.visual.material, 'roughnessFactor'):
-                        tm.visual.material.roughnessFactor = 0.38
+                        tm.visual.material.roughnessFactor = 0.35
                     if hasattr(tm.visual.material, 'metallicFactor'):
                         tm.visual.material.metallicFactor = 0.05
                     tm.export(local_glb)
@@ -369,11 +362,24 @@ class AppApi:
                 "glb_path": local_glb,
                 "obj_path": local_obj,
                 "folder": item_dir,
-                "engine_used": "Cloud Siêu Nét (PBR Material 75 Steps)"
+                "engine_used": f"Cloud Multi-view ({steps} Steps + PBR Material)"
             }
         except Exception as e:
             logging.exception("Error in _generate_cloud_free")
-            return {"success": False, "error": f"Lỗi Cloud: {str(e)}"}
+            err_msg = str(e)
+            if "ZeroGPU quota" in err_msg or "quota" in err_msg.lower():
+                err_msg = (
+                    "Hugging Face Cloud đang tạm hết lượt ZeroGPU miễn phí cho IP này (hoặc server bận).\n"
+                    "👉 Bạn hãy chuyển sang chế độ 'GPU Offline' (RTX 3050) để tạo ngay lập tức không giới hạn và siêu nét, "
+                    "hoặc dán Hugging Face Token miễn phí trong Cài đặt!"
+                )
+            return {"success": False, "error": err_msg}
+
+    def save_settings(self, hf_token=None):
+        if hf_token is not None:
+            self.config["hf_token"] = hf_token.strip()
+        save_config(self.config)
+        return {"success": True}
 
     def open_folder(self, folder_path=None):
         target = folder_path if folder_path else (self.last_folder if self.last_folder else OUTPUT_DIR)
@@ -600,7 +606,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             height: calc(100vh - 56px);
         }
         .sidebar {
-            width: 380px;
+            width: 390px;
             background: #11141d;
             border-right: 1px solid #232936;
             padding: 18px;
@@ -670,13 +676,13 @@ HTML_CONTENT = """<!DOCTYPE html>
             text-align: center;
         }
         .mode-btn.active {
-            background: linear-gradient(135deg, #10b981, #3b82f6);
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
             color: #fff;
-            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
-        }
-        .mode-btn.local.active {
-            background: #2563eb;
             box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+        }
+        .mode-btn.cloud.active {
+            background: linear-gradient(135deg, #10b981, #3b82f6);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
         }
 
         .engine-card {
@@ -730,7 +736,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             color: #cbd5e1;
         }
         .btn-generate {
-            background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+            background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
             color: white;
             border: none;
             padding: 14px;
@@ -743,11 +749,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             align-items: center;
             justify-content: center;
             gap: 8px;
-            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
-        }
-        .btn-generate.local-active {
-            background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
             box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
+        }
+        .btn-generate.cloud-active {
+            background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
         }
         .btn-generate:hover:not(:disabled) {
             transform: translateY(-1px);
@@ -962,13 +968,16 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="logo">
                 <span class="logo-tag">3D AI</span> AI 3D Studio
             </div>
-            <span class="version-badge" id="appVersion">v1.3.0</span>
+            <span class="version-badge" id="appVersion">v1.4.0</span>
         </div>
         <div class="header-right">
             <div class="gpu-badge" id="hwBadge">
                 <div class="dot"></div>
                 <span id="hwText">NVIDIA RTX 3050 (Ready)</span>
             </div>
+            <button class="btn-header" onclick="openSettingsModal()">
+                ⚙️ Cài đặt
+            </button>
             <button class="btn-header" onclick="openUpdateModal()">
                 🔄 Cập nhật GitHub
             </button>
@@ -980,11 +989,11 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="sidebar">
             <!-- Mode Switcher -->
             <div class="mode-switcher">
-                <button class="mode-btn active" id="btnModeCloud" onclick="setEngine('cloud_free')">
-                    🌟 Cloud Siêu Nét (PBR)
+                <button class="mode-btn active" id="btnModeLocal" onclick="setEngine('local')">
+                    ⚡ GPU Offline (RTX 3050)
                 </button>
-                <button class="mode-btn local" id="btnModeLocal" onclick="setEngine('local')">
-                    ⚡ GPU Offline
+                <button class="mode-btn cloud" id="btnModeCloud" onclick="setEngine('cloud_free')">
+                    🌟 Cloud Multi-View
                 </button>
             </div>
 
@@ -999,36 +1008,21 @@ HTML_CONTENT = """<!DOCTYPE html>
 
             <!-- Engine Info Card -->
             <div class="engine-card">
-                <span class="engine-title" id="engineTitle">🌟 Chế độ: Cloud Siêu Nét (PBR 100% Free)</span>
+                <span class="engine-title" id="engineTitle">⚡ Chế độ: GPU Cục bộ (RTX 3050 Offline)</span>
                 <span class="engine-desc" id="engineDesc">
-                    Dùng cụm GPU Cloud miễn phí với <b>75 bước tính toán chi tiết</b> và vật liệu PBR bóng bẩy chuẩn Game.
+                    Chạy trực tiếp trên <b>NVIDIA RTX 3050</b>. Tốc độ siêu nhanh (~10s), không giới hạn lượt tạo, không cần mạng internet!
                 </span>
             </div>
 
-            <!-- Cloud Free Settings -->
-            <div id="cloudSettings">
-                <div class="setting-group" style="margin-bottom: 6px;">
-                    <label>Chất lượng tái tạo Cloud</label>
-                    <select id="cloudQuality">
-                        <option value="max" selected>75 Steps - Chi tiết tối đa (Khuyên dùng)</option>
-                        <option value="fast">45 Steps - Tốc độ nhanh</option>
-                    </select>
-                </div>
-                <p style="font-size: 11px; color: #34d399; line-height: 1.3;">
-                    ✓ Hoàn toàn miễn phí 100% không cần thẻ Visa.<br>
-                    ✓ Tự động phủ vật liệu PBR bóng bẩy cho quả chuối & nhân vật.
-                </p>
-            </div>
-
             <!-- Local Settings -->
-            <div id="localSettings" style="display: none;">
+            <div id="localSettings">
                 <div class="setting-group" style="margin-bottom: 8px;">
-                    <label>Độ phân giải lưới</label>
+                    <label>Độ phân giải lưới 3D</label>
                     <select id="mcRes">
-                        <option value="auto" selected>Tự động tối ưu theo máy</option>
-                        <option value="128">128 (Siêu nhanh ~3s - Dành cho CPU)</option>
-                        <option value="256">256 (Chuẩn chi tiết - Dành cho RTX)</option>
-                        <option value="384">384 (Cực chi tiết ~15s)</option>
+                        <option value="auto" selected>Tự động tối ưu (256 - Siêu chuẩn)</option>
+                        <option value="256">256 (Chuẩn chi tiết cao - Khuyên dùng)</option>
+                        <option value="384">384 (Cực chi tiết tối đa)</option>
+                        <option value="128">128 (Siêu tốc ~3s - Dành cho CPU)</option>
                     </select>
                 </div>
                 <div class="setting-group" style="margin-bottom: 8px;">
@@ -1037,16 +1031,35 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <span>✨ Làm mịn bề mặt Taubin (Khử lồi lõm sần sùi)</span>
                     </label>
                 </div>
-                <div class="setting-group">
+                <div class="setting-group" style="margin-bottom: 8px;">
                     <label class="checkbox-label">
                         <input type="checkbox" id="bakeTexture" checked>
-                        <span>Bake Texture sắc nét + Normal Map</span>
+                        <span>🎨 Bake Texture sắc nét + Tăng tương phản PBR</span>
                     </label>
                 </div>
+                <p style="font-size: 11px; color: #34d399; line-height: 1.3;">
+                    ✓ Tự động tách nền thông minh bằng AI, bảo toàn 100% chi tiết.<br>
+                    ✓ Tự động phủ lớp vật liệu PBR bóng bẩy chuẩn game Unity.
+                </p>
+            </div>
+
+            <!-- Cloud Free Settings -->
+            <div id="cloudSettings" style="display: none;">
+                <div class="setting-group" style="margin-bottom: 6px;">
+                    <label>Chất lượng tái tạo Cloud</label>
+                    <select id="cloudQuality">
+                        <option value="max" selected>32 Steps - Chuẩn ZeroGPU Miễn Phí (An toàn)</option>
+                        <option value="fast">22 Steps - Tốc độ nhanh</option>
+                    </select>
+                </div>
+                <p style="font-size: 11px; color: #38bdf8; line-height: 1.3;">
+                    ✓ Tái tạo đa góc nhìn (Multi-view 3D) trên cụm GPU Cloud miễn phí.<br>
+                    ✓ Đã tối ưu số bước tính toán để không bao giờ bị vượt quá giới hạn ZeroGPU.
+                </p>
             </div>
 
             <button class="btn-generate" id="btnGen" onclick="startGeneration()" disabled>
-                🌟 BẮT ĐẦU TẠO 3D SIÊU NÉT
+                ⚡ BẮT ĐẦU TẠO 3D (RTX 3050)
             </button>
 
             <div class="status-box">
@@ -1108,6 +1121,27 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- SETTINGS MODAL -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title">⚙️ Cài đặt hệ thống & Token</span>
+                <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+            </div>
+            <div class="setting-group">
+                <label>Hugging Face Token (Tùy chọn - Hoàn toàn miễn phí):</label>
+                <input type="text" id="hfTokenInput" placeholder="hf_..." style="font-family: monospace;">
+                <p style="font-size: 11px; color: #94a3b8; line-height: 1.4; margin-top: 4px;">
+                    💡 Đăng ký miễn phí tại <b style="color: #60a5fa;">huggingface.co/settings/tokens</b> (không cần Visa) để nhận thêm quota ZeroGPU Cloud khi dùng chế độ Cloud. Nếu dùng GPU Offline RTX 3050 thì không cần điền.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-modal btn-modal-secondary" onclick="closeSettingsModal()">Hủy</button>
+                <button class="btn-modal btn-modal-primary" onclick="saveSettings()">💾 Lưu Cài Đặt</button>
+            </div>
+        </div>
+    </div>
+
     <!-- UPDATE MODAL -->
     <div class="modal-overlay" id="updateModal">
         <div class="modal">
@@ -1131,7 +1165,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         let selectedImagePath = null;
         let lastFolder = null;
         let latestDownloadUrl = null;
-        let currentEngine = "cloud_free";
+        let currentEngine = "local"; // Default to fast local RTX 3050!
 
         window.addEventListener('pywebviewready', async () => {
             const data = await window.pywebview.api.get_init_data();
@@ -1143,6 +1177,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 hwText.innerText = "GPU: " + hw.name + " (" + hw.vram_gb + " GB)";
             } else {
                 hwText.innerText = hw.status_text;
+            }
+
+            if (data.config && data.config.hf_token) {
+                document.getElementById("hfTokenInput").value = data.config.hf_token;
             }
         });
 
@@ -1157,21 +1195,21 @@ HTML_CONTENT = """<!DOCTYPE html>
             const cloudSettings = document.getElementById("cloudSettings");
 
             if (engine === "local") {
-                btnLocal.className = "mode-btn local active";
-                btnCloud.className = "mode-btn";
-                title.innerText = "⚡ Chế độ: GPU Cục bộ (Offline)";
-                desc.innerHTML = "Chạy trực tiếp trên RTX 3050. Miễn phí 100%, không cần mạng internet.";
-                btnGen.className = "btn-generate local-active";
-                btnGen.innerText = "⚡ BẮT ĐẦU TẠO 3D (OFFLINE)";
+                btnLocal.className = "mode-btn active";
+                btnCloud.className = "mode-btn cloud";
+                title.innerText = "⚡ Chế độ: GPU Cục bộ (RTX 3050 Offline)";
+                desc.innerHTML = "Chạy trực tiếp trên <b>NVIDIA RTX 3050</b>. Tốc độ siêu nhanh (~10s), không giới hạn lượt tạo, không cần mạng internet!";
+                btnGen.className = "btn-generate";
+                btnGen.innerText = "⚡ BẮT ĐẦU TẠO 3D (RTX 3050)";
                 localSettings.style.display = "block";
                 cloudSettings.style.display = "none";
             } else {
-                btnLocal.className = "mode-btn local";
-                btnCloud.className = "mode-btn active";
-                title.innerText = "🌟 Chế độ: Cloud Siêu Nét (PBR 100% Free)";
-                desc.innerHTML = "Dùng cụm GPU Cloud miễn phí với <b>75 bước tính toán chi tiết</b> và vật liệu PBR bóng bẩy chuẩn Game.";
-                btnGen.className = "btn-generate";
-                btnGen.innerText = "🌟 BẮT ĐẦU TẠO 3D SIÊU NÉT";
+                btnLocal.className = "mode-btn";
+                btnCloud.className = "mode-btn cloud active";
+                title.innerText = "🌟 Chế độ: Cloud Siêu Nét (PBR Multi-View)";
+                desc.innerHTML = "Dùng cụm GPU Cloud miễn phí với thuật toán Multi-view và vật liệu PBR bóng bẩy chuẩn Game.";
+                btnGen.className = "btn-generate cloud-active";
+                btnGen.innerText = "🌟 BẮT ĐẦU TẠO 3D TRÊN CLOUD";
                 localSettings.style.display = "none";
                 cloudSettings.style.display = "block";
             }
@@ -1227,9 +1265,9 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById("dropzone").style.pointerEvents = "none";
             
             if (currentEngine === "local") {
-                setStatus("AI đang tính toán hình khối & làm mịn Taubin (~5 - 15 giây)...", true);
+                setStatus("AI đang phân giải hình khối & làm mịn Taubin (~8 - 15 giây)...", true);
             } else {
-                setStatus("Đang tính toán 75 bước chi tiết & phủ vật liệu PBR (~30 - 50 giây)...", true);
+                setStatus("Đang tính toán Multi-view & phủ vật liệu PBR (~20 - 35 giây)...", true);
             }
 
             try {
@@ -1275,6 +1313,22 @@ HTML_CONTENT = """<!DOCTYPE html>
         function setStatus(text, loading) {
             document.getElementById("statusText").innerText = text;
             document.getElementById("spinner").style.display = loading ? "inline-block" : "none";
+        }
+
+        // ====== SETTINGS MODAL ======
+        function openSettingsModal() {
+            document.getElementById("settingsModal").style.display = "flex";
+        }
+
+        function closeSettingsModal() {
+            document.getElementById("settingsModal").style.display = "none";
+        }
+
+        async function saveSettings() {
+            const token = document.getElementById("hfTokenInput").value.trim();
+            await window.pywebview.api.save_settings(token);
+            closeSettingsModal();
+            setStatus("✓ Đã lưu cài đặt!", false);
         }
 
         // ====== UPDATE SYSTEM ======

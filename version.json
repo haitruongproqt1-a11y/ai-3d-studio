@@ -1,12 +1,12 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Nâng cấp chế độ Cloud lên 75 Steps (Chi tiết tối đa - Khử bệt màu)",
-    "Tích hợp công nghệ PBR Realistic Materials (Tự động phủ độ bóng bẩy, độ nhám và gân nổi)",
-    "Thêm thanh điều khiển ánh sáng Studio Cinematic ACES trong khung xem 3D",
-    "Tự động tăng cường độ bão hòa màu sắc (Vỏ chuối vàng tươi, cuống chuối thật 100%)",
-    "Tối ưu hóa xuất file GLB hoàn chỉnh cho Unity Game"
+    "Khắc phục 100% lỗi ZeroGPU Quota trên Cloud bằng thuật toán phân bố Multi-view 32 bước tối ưu",
+    "Nâng cấp tách nền thông minh AI Rembg bảo toàn nguyên vẹn 100% chi tiết vật thể (khắc phục hiện tượng rách/cháy góc cạnh)",
+    "Tăng tốc độ Render & Triplane NeRF lên 65536 chunk cho NVIDIA RTX 3050",
+    "Tích hợp thêm mục Cài đặt Token Hugging Face trực tiếp trong giao diện",
+    "Đặt chế độ GPU Offline (RTX 3050) làm mặc định siêu tốc, không cần mạng, không giới hạn lượt tạo"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.3.0/update_v1.3.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.0/update_v1.4.0.zip"
 }
