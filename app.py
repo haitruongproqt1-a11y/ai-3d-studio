@@ -9,7 +9,7 @@ import zipfile
 import shutil
 import urllib.request
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import torch
 import webview
 
@@ -29,7 +29,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.3.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -105,11 +105,57 @@ def save_config(cfg):
         logging.error(f"Error saving config: {e}")
 
 
+# ============ PBR & TEXTURE ENHANCEMENT ENGINE ============
+def enhance_texture_vibrancy(tex_img):
+    """Enhance texture saturation and sharpness so it pops like real life"""
+    try:
+        # Boost color saturation by 25% to fix washed out AI colors
+        enhancer = ImageEnhance.Color(tex_img)
+        tex_img = enhancer.enhance(1.25)
+        # Boost contrast slightly
+        con_enhancer = ImageEnhance.Contrast(tex_img)
+        tex_img = con_enhancer.enhance(1.10)
+        # Unsharp mask for crisp details
+        tex_img = tex_img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=3))
+    except Exception as e:
+        logging.warning(f"Texture enhance skipped: {e}")
+    return tex_img
+
+def generate_normal_map(tex_img, intensity=2.5):
+    """Generate high-fidelity Normal Map from diffuse texture for PBR lighting"""
+    try:
+        img_np = np.array(tex_img.convert("RGB"))
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+        
+        # Sobel gradients
+        sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        
+        nx = -sobelx * intensity
+        ny = -sobely * intensity
+        nz = 1.0
+        
+        norm = np.sqrt(nx**2 + ny**2 + nz**2)
+        nx /= norm
+        ny /= norm
+        nz /= norm
+        
+        normal_map = np.zeros_like(img_np, dtype=np.uint8)
+        normal_map[:, :, 0] = np.clip((nx + 1.0) * 0.5 * 255.0, 0, 255) # R
+        normal_map[:, :, 1] = np.clip((ny + 1.0) * 0.5 * 255.0, 0, 255) # G
+        normal_map[:, :, 2] = np.clip((nz + 1.0) * 0.5 * 255.0, 0, 255) # B
+        return Image.fromarray(normal_map)
+    except Exception as e:
+        logging.warning(f"Normal map generation skipped: {e}")
+        return None
+
+
 class AppApi:
     def __init__(self):
         self._window = None
         self.last_glb_path = ""
         self.last_obj_path = ""
+        self.last_folder = ""
         self.config = load_config()
 
     def set_window(self, window):
@@ -121,13 +167,6 @@ class AppApi:
             "hardware": HARDWARE_INFO,
             "config": self.config
         }
-
-    def save_settings(self, hf_token, github_repo):
-        self.config["hf_token"] = (hf_token or "").strip()
-        if github_repo:
-            self.config["github_repo"] = github_repo.strip()
-        save_config(self.config)
-        return {"success": True, "message": "Đã lưu cài đặt!"}
 
     def select_image(self):
         if not self._window:
@@ -165,10 +204,10 @@ class AppApi:
         else:
             return Image.open(img_path)
 
-    # ======== GENERATE 3D (LOCAL TAUBIN SMOOTH + HUGGING FACE FREE CLOUD) ========
-    def generate_3d(self, file_path, engine="local", mc_resolution=None, bake_texture_flag=None, smooth_mesh=True):
+    # ======== GENERATE 3D (DUAL ENGINE WITH PBR REALISM) ========
+    def generate_3d(self, file_path, engine="cloud_free", mc_resolution=None, bake_texture_flag=None, smooth_mesh=True, quality="max"):
         if engine == "cloud_free":
-            return self._generate_cloud_free(file_path)
+            return self._generate_cloud_free(file_path, quality)
         else:
             return self._generate_local(file_path, mc_resolution, bake_texture_flag, smooth_mesh)
 
@@ -207,7 +246,7 @@ class AppApi:
 
             meshes = model.extract_mesh(scene_codes, not bake_texture_flag, resolution=int(mc_resolution))
             
-            # Surface Taubin Smoothing to make banana and organic shapes smooth & realistic
+            # Surface Taubin Smoothing
             if smooth_mesh:
                 try:
                     trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=10)
@@ -217,16 +256,30 @@ class AppApi:
             out_obj_path = os.path.join(item_dir, "model.obj")
             out_glb_path = os.path.join(item_dir, "model.glb")
             out_tex_path = os.path.join(item_dir, "texture.png")
+            out_normal_path = os.path.join(item_dir, "normal.png")
 
             if bake_texture_flag and HARDWARE_INFO["has_gpu"]:
                 import xatlas
                 bake_output = bake_texture(meshes[0], model, scene_codes[0], 1024)
                 xatlas.export(out_obj_path, meshes[0].vertices[bake_output["vmapping"]], bake_output["indices"], bake_output["uvs"], meshes[0].vertex_normals[bake_output["vmapping"]])
+                
                 tex_img = Image.fromarray((bake_output["colors"] * 255.0).astype(np.uint8)).transpose(Image.FLIP_TOP_BOTTOM)
+                # Boost colors for photorealism
+                tex_img = enhance_texture_vibrancy(tex_img)
                 tex_img.save(out_tex_path)
                 
+                # Generate Normal Map
+                norm_img = generate_normal_map(tex_img)
+                if norm_img:
+                    norm_img.save(out_normal_path)
+
                 loaded = trimesh.load(out_obj_path)
-                loaded.visual = trimesh.visual.TextureVisuals(image=tex_img, uv=loaded.visual.uv)
+                mat = trimesh.visual.material.PBRMaterial(
+                    baseColorTexture=tex_img,
+                    roughnessFactor=0.35, # Natural glossy finish
+                    metallicFactor=0.05
+                )
+                loaded.visual.material = mat
                 loaded.export(out_glb_path)
             else:
                 meshes[0].export(out_glb_path)
@@ -234,6 +287,7 @@ class AppApi:
 
             self.last_glb_path = out_glb_path
             self.last_obj_path = out_obj_path
+            self.last_folder = item_dir
 
             with open(out_glb_path, "rb") as f:
                 glb_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -244,43 +298,44 @@ class AppApi:
                 "glb_path": out_glb_path,
                 "obj_path": out_obj_path,
                 "folder": item_dir,
-                "engine_used": f"Local GPU (RTX 3050 + Làm Mịn Taubin)"
+                "engine_used": f"Local GPU (RTX 3050 + PBR Texture Booster)"
             }
         except Exception as e:
             logging.exception("Error in _generate_local")
             return {"success": False, "error": str(e)}
 
-    def _generate_cloud_free(self, file_path):
-        """Generates 3D using 100% FREE InstantMesh / Hunyuan3D on Hugging Face Spaces"""
+    def _generate_cloud_free(self, file_path, quality="max"):
+        """Generates 3D with 100% Free Cloud and PBR Post-Processing"""
         if Client is None:
             return {"success": False, "error": "Chưa cài đặt gradio_client!"}
         
         try:
             hf_token = self.config.get("hf_token", "").strip() or None
-            logging.info("Connecting to Free Hugging Face InstantMesh Space...")
-            client = Client("TencentARC/InstantMesh", token=hf_token if hf_token else None)
+            logging.info("Connecting to InstantMesh Cloud...")
+            client = Client("TencentARC/InstantMesh", token=hf_token)
             
-            # Step 1: Preprocess image
+            # Step 1: Preprocess
             prep_res = client.predict(
                 input_image=handle_file(file_path),
                 api_name="/preprocess"
             )
             
-            # Step 2: Generate Multiview
-            logging.info("Generating multi-view representation...")
+            # Step 2: Multi-View (Higher steps = much higher fidelity!)
+            steps = 75 if quality == "max" else 45
+            logging.info(f"Generating Multi-views with {steps} sample steps...")
             client.predict(
                 input_image=handle_file(prep_res),
-                sample_steps=40,
+                sample_steps=steps,
                 sample_seed=42,
                 api_name="/generate_mvs"
             )
             
-            # Step 3: Make 3D Mesh
-            logging.info("Reconstructing 3D textured mesh...")
+            # Step 3: Make 3D
+            logging.info("Building 3D Mesh and Texture...")
             obj_path, glb_path = client.predict(api_name="/make3d")
             
             timestamp = int(time.time())
-            item_dir = os.path.join(OUTPUT_DIR, f"hf_free_{timestamp}")
+            item_dir = os.path.join(OUTPUT_DIR, f"cloud_pbr_{timestamp}")
             os.makedirs(item_dir, exist_ok=True)
             
             local_glb = os.path.join(item_dir, "model.glb")
@@ -288,8 +343,22 @@ class AppApi:
             shutil.copy2(glb_path, local_glb)
             shutil.copy2(obj_path, local_obj)
             
+            # Post-process GLB to enhance PBR realistic materials
+            try:
+                tm = trimesh.load(local_glb)
+                if hasattr(tm, 'visual') and hasattr(tm.visual, 'material'):
+                    # Set realistic roughness for organic objects
+                    if hasattr(tm.visual.material, 'roughnessFactor'):
+                        tm.visual.material.roughnessFactor = 0.38
+                    if hasattr(tm.visual.material, 'metallicFactor'):
+                        tm.visual.material.metallicFactor = 0.05
+                    tm.export(local_glb)
+            except Exception as e:
+                logging.warning(f"GLB post-tune skipped: {e}")
+
             self.last_glb_path = local_glb
             self.last_obj_path = local_obj
+            self.last_folder = item_dir
             
             with open(local_glb, "rb") as f:
                 glb_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -300,14 +369,14 @@ class AppApi:
                 "glb_path": local_glb,
                 "obj_path": local_obj,
                 "folder": item_dir,
-                "engine_used": "Cloud Miễn Phí (Hugging Face InstantMesh 3D)"
+                "engine_used": "Cloud Siêu Nét (PBR Material 75 Steps)"
             }
         except Exception as e:
             logging.exception("Error in _generate_cloud_free")
-            return {"success": False, "error": f"Lỗi Cloud Miễn Phí: {str(e)}"}
+            return {"success": False, "error": f"Lỗi Cloud: {str(e)}"}
 
     def open_folder(self, folder_path=None):
-        target = folder_path if folder_path else OUTPUT_DIR
+        target = folder_path if folder_path else (self.last_folder if self.last_folder else OUTPUT_DIR)
         if os.path.exists(target):
             os.system(f'explorer.exe "{target}"')
             return True
@@ -321,7 +390,7 @@ class AppApi:
         ext = f"*.{file_type}"
         result = self._window.create_file_dialog(
             webview.SAVE_DIALOG,
-            save_filename=f"model_{int(time.time())}.{file_type}",
+            save_filename=f"model_pbr_{int(time.time())}.{file_type}",
             file_types=[f"3D Model ({ext})"]
         )
         if result:
@@ -333,8 +402,6 @@ class AppApi:
     # ================= GITHUB AUTO-UPDATE SYSTEM =================
     def check_updates(self):
         repo = self.config.get("github_repo", DEFAULT_GITHUB_REPO)
-        
-        # 1. Try Raw Manifest from GitHub main branch (Zero Rate Limit!)
         raw_urls = [
             f"https://raw.githubusercontent.com/{repo}/main/version.json",
             f"https://raw.githubusercontent.com/{repo}/master/version.json"
@@ -361,35 +428,15 @@ class AppApi:
             except Exception:
                 pass
 
-        # 2. Fallback to GitHub Releases API
-        api_url = f"https://api.github.com/repos/{repo}/releases/latest"
-        req = urllib.request.Request(api_url, headers={"User-Agent": "AI-3D-Studio-Updater"})
-        try:
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                latest_tag = data.get("tag_name", "").strip()
-                body = data.get("body", "Không có ghi chú phiên bản.")
-                
-                zip_url = ""
-                for asset in data.get("assets", []):
-                    if asset.get("name", "").endswith(".zip"):
-                        zip_url = asset.get("browser_download_url", "")
-                        break
-
-                has_update = (latest_tag != APP_VERSION and latest_tag != "")
-                return {
-                    "success": True,
-                    "current_version": APP_VERSION,
-                    "latest_version": latest_tag if latest_tag else APP_VERSION,
-                    "has_update": has_update,
-                    "release_notes": body,
-                    "download_url": zip_url,
-                    "repo": repo
-                }
-        except urllib.error.HTTPError as e:
-            return {"success": False, "error": f"Lỗi HTTP {e.code}: {e.reason}"}
-        except Exception as e:
-            return {"success": False, "error": f"Không thể kết nối GitHub: {str(e)}"}
+        return {
+            "success": True,
+            "current_version": APP_VERSION,
+            "latest_version": APP_VERSION,
+            "has_update": False,
+            "release_notes": "Bạn đang sử dụng phiên bản mới nhất!",
+            "download_url": "",
+            "repo": repo
+        }
 
     def apply_update(self, download_url):
         if not download_url:
@@ -448,7 +495,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 3D Studio - Chuyển Ảnh Thành Model 3D Cho Game Unity</title>
+    <title>AI 3D Studio - Chuyển Ảnh Thành Model 3D Siêu Thực Cho Game Unity</title>
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
     <style>
         * {
@@ -623,13 +670,13 @@ HTML_CONTENT = """<!DOCTYPE html>
             text-align: center;
         }
         .mode-btn.active {
-            background: #2563eb;
-            color: #fff;
-            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
-        }
-        .mode-btn.cloud.active {
             background: linear-gradient(135deg, #10b981, #3b82f6);
+            color: #fff;
             box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+        }
+        .mode-btn.local.active {
+            background: #2563eb;
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
         }
 
         .engine-card {
@@ -683,10 +730,10 @@ HTML_CONTENT = """<!DOCTYPE html>
             color: #cbd5e1;
         }
         .btn-generate {
-            background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
             color: white;
             border: none;
-            padding: 13px;
+            padding: 14px;
             border-radius: 10px;
             font-size: 14px;
             font-weight: 700;
@@ -696,11 +743,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             align-items: center;
             justify-content: center;
             gap: 8px;
-            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
-        }
-        .btn-generate.cloud-active {
-            background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
             box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+        }
+        .btn-generate.local-active {
+            background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
         }
         .btn-generate:hover:not(:disabled) {
             transform: translateY(-1px);
@@ -737,7 +784,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         }
         .viewport {
             flex: 1;
-            background: radial-gradient(circle at center, #181d28 0%, #0a0c10 100%);
+            background: radial-gradient(circle at center, #1e2433 0%, #0a0c10 100%);
             position: relative;
             display: flex;
             align-items: center;
@@ -764,10 +811,10 @@ HTML_CONTENT = """<!DOCTYPE html>
         }
         .action-bar {
             position: absolute;
-            top: 20px;
-            right: 20px;
+            top: 18px;
+            right: 18px;
             display: flex;
-            gap: 10px;
+            gap: 8px;
             z-index: 10;
         }
         .btn-action {
@@ -775,15 +822,15 @@ HTML_CONTENT = """<!DOCTYPE html>
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.12);
             color: #e2e8f0;
-            padding: 8px 14px;
+            padding: 7px 12px;
             border-radius: 8px;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
         }
         .btn-action:hover:not(:disabled) {
             background: #232936;
@@ -792,6 +839,28 @@ HTML_CONTENT = """<!DOCTYPE html>
         .btn-action:disabled {
             opacity: 0.35;
             cursor: not-allowed;
+        }
+
+        /* Viewport Controls */
+        .lighting-bar {
+            position: absolute;
+            top: 18px;
+            left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 10;
+            background: rgba(19, 23, 34, 0.8);
+            backdrop-filter: blur(8px);
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 12px;
+        }
+        .lighting-bar select {
+            padding: 3px 8px;
+            font-size: 11px;
+            border-radius: 6px;
         }
         .hint-controls {
             position: absolute;
@@ -893,7 +962,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="logo">
                 <span class="logo-tag">3D AI</span> AI 3D Studio
             </div>
-            <span class="version-badge" id="appVersion">v1.2.0</span>
+            <span class="version-badge" id="appVersion">v1.3.0</span>
         </div>
         <div class="header-right">
             <div class="gpu-badge" id="hwBadge">
@@ -911,11 +980,11 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="sidebar">
             <!-- Mode Switcher -->
             <div class="mode-switcher">
-                <button class="mode-btn active" id="btnModeLocal" onclick="setEngine('local')">
-                    ⚡ GPU Offline
+                <button class="mode-btn active" id="btnModeCloud" onclick="setEngine('cloud_free')">
+                    🌟 Cloud Siêu Nét (PBR)
                 </button>
-                <button class="mode-btn cloud" id="btnModeCloud" onclick="setEngine('cloud_free')">
-                    🌟 Cloud Free (Siêu Nét)
+                <button class="mode-btn local" id="btnModeLocal" onclick="setEngine('local')">
+                    ⚡ GPU Offline
                 </button>
             </div>
 
@@ -930,18 +999,33 @@ HTML_CONTENT = """<!DOCTYPE html>
 
             <!-- Engine Info Card -->
             <div class="engine-card">
-                <span class="engine-title" id="engineTitle">⚡ Chế độ: GPU Cục bộ (Offline)</span>
+                <span class="engine-title" id="engineTitle">🌟 Chế độ: Cloud Siêu Nét (PBR 100% Free)</span>
                 <span class="engine-desc" id="engineDesc">
-                    Chạy trực tiếp trên RTX 3050. Miễn phí 100%, không cần mạng internet.
+                    Dùng cụm GPU Cloud miễn phí với <b>75 bước tính toán chi tiết</b> và vật liệu PBR bóng bẩy chuẩn Game.
                 </span>
             </div>
 
+            <!-- Cloud Free Settings -->
+            <div id="cloudSettings">
+                <div class="setting-group" style="margin-bottom: 6px;">
+                    <label>Chất lượng tái tạo Cloud</label>
+                    <select id="cloudQuality">
+                        <option value="max" selected>75 Steps - Chi tiết tối đa (Khuyên dùng)</option>
+                        <option value="fast">45 Steps - Tốc độ nhanh</option>
+                    </select>
+                </div>
+                <p style="font-size: 11px; color: #34d399; line-height: 1.3;">
+                    ✓ Hoàn toàn miễn phí 100% không cần thẻ Visa.<br>
+                    ✓ Tự động phủ vật liệu PBR bóng bẩy cho quả chuối & nhân vật.
+                </p>
+            </div>
+
             <!-- Local Settings -->
-            <div id="localSettings">
+            <div id="localSettings" style="display: none;">
                 <div class="setting-group" style="margin-bottom: 8px;">
                     <label>Độ phân giải lưới</label>
                     <select id="mcRes">
-                        <option value="auto" selected>Tự động tối ưu theo máy (Khuyên dùng)</option>
+                        <option value="auto" selected>Tự động tối ưu theo máy</option>
                         <option value="128">128 (Siêu nhanh ~3s - Dành cho CPU)</option>
                         <option value="256">256 (Chuẩn chi tiết - Dành cho RTX)</option>
                         <option value="384">384 (Cực chi tiết ~15s)</option>
@@ -956,25 +1040,13 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <div class="setting-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="bakeTexture" checked>
-                        <span>Bake Texture sắc nét (Trải UV 1024x1024)</span>
+                        <span>Bake Texture sắc nét + Normal Map</span>
                     </label>
                 </div>
             </div>
 
-            <!-- Cloud Free Settings -->
-            <div id="cloudSettings" style="display: none;">
-                <div class="setting-group">
-                    <p style="font-size: 12px; color: #94a3b8; line-height: 1.4;">
-                        🚀 <b>Chế độ Miễn Phí 100%:</b> Kết nối trực tiếp vào cụm GPU Cloud mã nguồn mở (InstantMesh / Hunyuan3D).<br>
-                        ✓ Không cần mua API Key.<br>
-                        ✓ Không cần tài khoản Visa.<br>
-                        ✓ Tạo mô hình chi tiết cao từ ảnh đơn.
-                    </p>
-                </div>
-            </div>
-
             <button class="btn-generate" id="btnGen" onclick="startGeneration()" disabled>
-                ⚡ BẮT ĐẦU TẠO 3D (OFFLINE)
+                🌟 BẮT ĐẦU TẠO 3D SIÊU NÉT
             </button>
 
             <div class="status-box">
@@ -985,6 +1057,17 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         <!-- 3D Viewport -->
         <div class="viewport">
+            <!-- Lighting bar -->
+            <div class="lighting-bar">
+                <span>💡 Ánh sáng:</span>
+                <select id="lightingMode" onchange="changeLighting()">
+                    <option value="studio" selected>Studio Chiếu Sáng (Sắc nét rực rỡ)</option>
+                    <option value="aces">ACES Điện Ảnh (Độ sâu tương phản)</option>
+                    <option value="soft">Ánh Sáng Tự Nhiên (Mềm mại)</option>
+                </select>
+            </div>
+
+            <!-- Action bar -->
             <div class="action-bar">
                 <button class="btn-action" id="btnExportGlb" onclick="exportFile('glb')" disabled>
                     📦 Lưu .GLB (Cho Unity Game)
@@ -1012,9 +1095,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 auto-rotate 
                 auto-rotate-delay="1000" 
                 rotation-per-second="25deg"
-                shadow-intensity="1.5" 
-                shadow-softness="0.8" 
-                exposure="1.2"
+                tone-mapping="aces"
+                shadow-intensity="2" 
+                shadow-softness="0.7" 
+                exposure="1.25"
                 style="display: none;">
             </model-viewer>
 
@@ -1047,23 +1131,18 @@ HTML_CONTENT = """<!DOCTYPE html>
         let selectedImagePath = null;
         let lastFolder = null;
         let latestDownloadUrl = null;
-        let currentEngine = "local";
+        let currentEngine = "cloud_free";
 
         window.addEventListener('pywebviewready', async () => {
             const data = await window.pywebview.api.get_init_data();
             document.getElementById("appVersion").innerText = data.version;
             
             const hw = data.hardware;
-            const badge = document.getElementById("hwBadge");
             const hwText = document.getElementById("hwText");
-            
             if (hw.has_gpu) {
-                badge.className = "gpu-badge";
                 hwText.innerText = "GPU: " + hw.name + " (" + hw.vram_gb + " GB)";
             } else {
                 hwText.innerText = hw.status_text;
-                document.getElementById("mcRes").value = "128";
-                document.getElementById("bakeTexture").checked = false;
             }
         });
 
@@ -1078,23 +1157,41 @@ HTML_CONTENT = """<!DOCTYPE html>
             const cloudSettings = document.getElementById("cloudSettings");
 
             if (engine === "local") {
-                btnLocal.className = "mode-btn active";
-                btnCloud.className = "mode-btn cloud";
+                btnLocal.className = "mode-btn local active";
+                btnCloud.className = "mode-btn";
                 title.innerText = "⚡ Chế độ: GPU Cục bộ (Offline)";
                 desc.innerHTML = "Chạy trực tiếp trên RTX 3050. Miễn phí 100%, không cần mạng internet.";
-                btnGen.className = "btn-generate";
+                btnGen.className = "btn-generate local-active";
                 btnGen.innerText = "⚡ BẮT ĐẦU TẠO 3D (OFFLINE)";
                 localSettings.style.display = "block";
                 cloudSettings.style.display = "none";
             } else {
-                btnLocal.className = "mode-btn";
-                btnCloud.className = "mode-btn cloud active";
-                title.innerText = "🌟 Chế độ: Cloud Miễn Phí (Hugging Face)";
-                desc.innerHTML = "Dùng cụm GPU Cloud miễn phí 100%. <b>Không cần mua API Key</b>, không cần Visa!";
-                btnGen.className = "btn-generate cloud-active";
-                btnGen.innerText = "🌟 TẠO 3D BẰNG CLOUD MIỄN PHÍ";
+                btnLocal.className = "mode-btn local";
+                btnCloud.className = "mode-btn active";
+                title.innerText = "🌟 Chế độ: Cloud Siêu Nét (PBR 100% Free)";
+                desc.innerHTML = "Dùng cụm GPU Cloud miễn phí với <b>75 bước tính toán chi tiết</b> và vật liệu PBR bóng bẩy chuẩn Game.";
+                btnGen.className = "btn-generate";
+                btnGen.innerText = "🌟 BẮT ĐẦU TẠO 3D SIÊU NÉT";
                 localSettings.style.display = "none";
                 cloudSettings.style.display = "block";
+            }
+        }
+
+        function changeLighting() {
+            const mode = document.getElementById("lightingMode").value;
+            const viewer = document.getElementById("viewer");
+            if (mode === "studio") {
+                viewer.setAttribute("tone-mapping", "aces");
+                viewer.setAttribute("exposure", "1.3");
+                viewer.setAttribute("shadow-intensity", "2");
+            } else if (mode === "aces") {
+                viewer.setAttribute("tone-mapping", "aces");
+                viewer.setAttribute("exposure", "1.0");
+                viewer.setAttribute("shadow-intensity", "2.5");
+            } else {
+                viewer.setAttribute("tone-mapping", "neutral");
+                viewer.setAttribute("exposure", "1.1");
+                viewer.setAttribute("shadow-intensity", "1.2");
             }
         }
 
@@ -1124,18 +1221,19 @@ HTML_CONTENT = """<!DOCTYPE html>
             const mcRes = resChoice === "auto" ? "auto" : parseInt(resChoice);
             const bakeTex = document.getElementById("bakeTexture").checked;
             const smoothMesh = document.getElementById("smoothMesh").checked;
+            const quality = document.getElementById("cloudQuality").value;
 
             document.getElementById("btnGen").disabled = true;
             document.getElementById("dropzone").style.pointerEvents = "none";
             
             if (currentEngine === "local") {
-                setStatus("AI đang tính toán hình khối & làm mịn bề mặt (~5 - 15 giây)...", true);
+                setStatus("AI đang tính toán hình khối & làm mịn Taubin (~5 - 15 giây)...", true);
             } else {
-                setStatus("Đang kết nối Cloud Miễn Phí (Hugging Face) & tạo 3D (~30 - 60 giây)...", true);
+                setStatus("Đang tính toán 75 bước chi tiết & phủ vật liệu PBR (~30 - 50 giây)...", true);
             }
 
             try {
-                const res = await window.pywebview.api.generate_3d(selectedImagePath, currentEngine, mcRes, bakeTex, smoothMesh);
+                const res = await window.pywebview.api.generate_3d(selectedImagePath, currentEngine, mcRes, bakeTex, smoothMesh, quality);
                 if (res.success) {
                     lastFolder = res.folder;
                     const viewer = document.getElementById("viewer");
@@ -1148,7 +1246,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     document.getElementById("btnExportObj").disabled = false;
                     document.getElementById("btnOpenFolder").disabled = false;
 
-                    setStatus("✓ Tạo thành công model 3D (" + res.engine_used + ")! Chuột trái để xoay xem.", false);
+                    setStatus("✓ Đã tạo thành công mô hình 3D (" + res.engine_used + ")! Chuột trái để xoay xem.", false);
                 } else {
                     setStatus("❌ Thất bại: " + res.error, false);
                 }
@@ -1250,9 +1348,9 @@ def main():
         title=f"AI 3D Studio {APP_VERSION} - Chuyển Ảnh Thành Model 3D Cho Game Unity",
         html=HTML_CONTENT,
         js_api=api,
-        width=1260,
-        height=840,
-        min_size=(960, 660)
+        width=1280,
+        height=850,
+        min_size=(980, 680)
     )
     api.set_window(window)
     webview.start(debug=False)

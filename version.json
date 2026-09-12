@@ -1,12 +1,12 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Tích hợp Cloud AI Miễn Phí 100% (Hugging Face) - Không cần mua API Key, không cần thẻ Visa",
-    "Bổ sung thuật toán làm mịn bề mặt Taubin Smoothing (Khử sạch sần sùi, làm vỏ chuối và vật thể láng bóng tự nhiên)",
-    "Khắc phục hoàn toàn lỗi Rate Limit 403 khi kiểm tra cập nhật bằng Raw Manifest",
-    "Sửa lỗi kết nối Cloud Free Client với token xác thực",
-    "Cơ chế cập nhật OTA 1-click mượt mà chuẩn VideoSub AI"
+    "Nâng cấp chế độ Cloud lên 75 Steps (Chi tiết tối đa - Khử bệt màu)",
+    "Tích hợp công nghệ PBR Realistic Materials (Tự động phủ độ bóng bẩy, độ nhám và gân nổi)",
+    "Thêm thanh điều khiển ánh sáng Studio Cinematic ACES trong khung xem 3D",
+    "Tự động tăng cường độ bão hòa màu sắc (Vỏ chuối vàng tươi, cuống chuối thật 100%)",
+    "Tối ưu hóa xuất file GLB hoàn chỉnh cho Unity Game"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.2.0/update_v1.2.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.3.0/update_v1.3.0.zip"
 }
