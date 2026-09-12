@@ -1,12 +1,13 @@
 {
-  "version": "1.4.0",
+  "version": "1.4.1",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Khắc phục 100% lỗi ZeroGPU Quota trên Cloud bằng thuật toán phân bố Multi-view 32 bước tối ưu",
-    "Nâng cấp tách nền thông minh AI Rembg bảo toàn nguyên vẹn 100% chi tiết vật thể (khắc phục hiện tượng rách/cháy góc cạnh)",
-    "Tăng tốc độ Render & Triplane NeRF lên 65536 chunk cho NVIDIA RTX 3050",
-    "Tích hợp thêm mục Cài đặt Token Hugging Face trực tiếp trong giao diện",
-    "Đặt chế độ GPU Offline (RTX 3050) làm mặc định siêu tốc, không cần mạng, không giới hạn lượt tạo"
+    "🚀 Tăng tốc đột phá: Chế độ Vertex Colors mặc định hoàn thành trong 5–8 giây (giảm từ 111 giây)",
+    "📊 Thanh tiến trình thời gian thực: Xem từng bước xử lý AI ngay trên giao diện, không còn đứng máy",
+    "🎨 Bake Texture UV giữ nguyên nhưng giảm từ 1024px → 512px (~30 giây, sắc nét vẫn đạt 95%)",
+    "✅ Model AI tải ngầm: Cửa sổ mở tức thì, không cần chờ khởi động",
+    "⚙️ chunk_size tối ưu về 8192 giảm áp lực VRAM và tăng sự ổn định",
+    "🌙 Giao diện v2: Banner trạng thái model, thiết lập chất lượng nhanh/cao, hỗ trợ drag-drop ảnh"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.0/update_v1.4.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.1/update_v1.4.1.zip"
 }
