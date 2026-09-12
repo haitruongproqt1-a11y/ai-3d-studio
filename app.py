@@ -258,7 +258,7 @@ class AppApi:
         try:
             hf_token = self.config.get("hf_token", "").strip() or None
             logging.info("Connecting to Free Hugging Face InstantMesh Space...")
-            client = Client("TencentARC/InstantMesh", hf_token=hf_token)
+            client = Client("TencentARC/InstantMesh", token=hf_token if hf_token else None)
             
             # Step 1: Preprocess image
             prep_res = client.predict(
@@ -333,6 +333,35 @@ class AppApi:
     # ================= GITHUB AUTO-UPDATE SYSTEM =================
     def check_updates(self):
         repo = self.config.get("github_repo", DEFAULT_GITHUB_REPO)
+        
+        # 1. Try Raw Manifest from GitHub main branch (Zero Rate Limit!)
+        raw_urls = [
+            f"https://raw.githubusercontent.com/{repo}/main/version.json",
+            f"https://raw.githubusercontent.com/{repo}/master/version.json"
+        ]
+        for r_url in raw_urls:
+            try:
+                r_req = urllib.request.Request(r_url, headers={"User-Agent": "AI-3D-Studio-Updater"})
+                with urllib.request.urlopen(r_req, timeout=5) as resp:
+                    if resp.status == 200:
+                        vdata = json.loads(resp.read().decode("utf-8"))
+                        ver = str(vdata.get("version", "")).replace("v", "").strip()
+                        cur = APP_VERSION.replace("v", "").strip()
+                        has_up = (ver != cur and ver != "")
+                        notes = "\n".join(vdata.get("releaseNotes", [])) if isinstance(vdata.get("releaseNotes"), list) else vdata.get("releaseNotes", "")
+                        return {
+                            "success": True,
+                            "current_version": APP_VERSION,
+                            "latest_version": f"v{ver}",
+                            "has_update": has_up,
+                            "release_notes": notes,
+                            "download_url": vdata.get("updateUrl", ""),
+                            "repo": repo
+                        }
+            except Exception:
+                pass
+
+        # 2. Fallback to GitHub Releases API
         api_url = f"https://api.github.com/repos/{repo}/releases/latest"
         req = urllib.request.Request(api_url, headers={"User-Agent": "AI-3D-Studio-Updater"})
         try:

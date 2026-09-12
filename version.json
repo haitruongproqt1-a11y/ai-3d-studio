@@ -1,12 +1,12 @@
 {
-  "version": "1.1.0",
-  "buildDate": "2026-09-12",
+  "version": "1.2.0",
+  "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Tich hop Cloud API Sieu Thuc (Meshy.ai) - Tao model 3D giong anh 99% chuan Game AAA",
-    "Ho tro day du bo vat lieu PBR (Do bong, do nham, van chi tiet cao)",
-    "Them che do Dual Engine: Chuyen doi linh hoat giua GPU Offline va Cloud API",
-    "Tu dong luu API Key trong phan Cai dat",
-    "Toi uu hoa bo tien xu ly va khu sach nen o vuong gia lap"
+    "Tích hợp Cloud AI Miễn Phí 100% (Hugging Face) - Không cần mua API Key, không cần thẻ Visa",
+    "Bổ sung thuật toán làm mịn bề mặt Taubin Smoothing (Khử sạch sần sùi, làm vỏ chuối và vật thể láng bóng tự nhiên)",
+    "Khắc phục hoàn toàn lỗi Rate Limit 403 khi kiểm tra cập nhật bằng Raw Manifest",
+    "Sửa lỗi kết nối Cloud Free Client với token xác thực",
+    "Cơ chế cập nhật OTA 1-click mượt mà chuẩn VideoSub AI"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.1.0/update_v1.1.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.2.0/update_v1.2.0.zip"
 }
