@@ -1,0 +1,10 @@
+.venv
+TripoSR/.venv
+output/
+output_app/
+output_baked/
+output_glb/
+__pycache__/
+*.zip
+update_temp.zip
+update_extracted/
