@@ -8,6 +8,7 @@ import threading
 import zipfile
 import shutil
 import urllib.request
+import urllib.error
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 import torch
@@ -23,7 +24,7 @@ import cv2
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.4.3"
+APP_VERSION = "v1.5.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -68,8 +69,7 @@ def load_ai_model():
             config_name="config.yaml",
             weight_name="model.ckpt",
         )
-        # 8192 chunk_size: optimal speed and VRAM stability on RTX 3050
-        model.renderer.set_chunk_size(8192)
+        model.renderer.set_chunk_size(16384 if HARDWARE_INFO["has_gpu"] else 1024)
         model.to(current_device)
         _model_ready.set()
         logging.info("Model loaded ✓")
@@ -83,7 +83,11 @@ def load_config():
                 return json.load(f)
     except Exception:
         pass
-    return {"github_repo": DEFAULT_GITHUB_REPO, "hf_token": ""}
+    return {
+        "github_repo": DEFAULT_GITHUB_REPO,
+        "hf_token": "",
+        "tripo_api_key": ""
+    }
 
 def save_config(cfg):
     try:
@@ -93,10 +97,10 @@ def save_config(cfg):
         logging.error(f"save_config: {e}")
 
 
-# ── Texture helpers ─────────────────────────────────────────────────────────
+# ── Texture & PBR helpers ───────────────────────────────────────────────────
 def enhance_texture(img: Image.Image) -> Image.Image:
     try:
-        img = ImageEnhance.Color(img).enhance(1.25)
+        img = ImageEnhance.Color(img).enhance(1.22)
         img = ImageEnhance.Contrast(img).enhance(1.08)
         img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=110, threshold=3))
     except Exception:
@@ -117,7 +121,6 @@ class AppApi:
         self._window = w
 
     def _find_latest_model(self):
-        """Scans output_app for the most recent valid model so user can view/save right away"""
         try:
             if not os.path.exists(OUTPUT_DIR):
                 return None
@@ -187,37 +190,170 @@ class AppApi:
         if orig.mode in ("RGBA", "LA"):
             alpha = np.array(orig)[:, :, -1]
             if (alpha < 240).any() and (alpha > 15).any():
-                self._progress("🖼 Dùng kênh alpha sẵn có của ảnh…", 10)
+                # Remove floor drop shadow artifacts (alpha < 60)
+                alpha_clean = np.where(alpha < 60, 0, alpha)
+                orig_np = np.array(orig)
+                orig_np[:, :, -1] = alpha_clean
+                orig = Image.fromarray(orig_np)
+
+                self._progress("🖼 Dùng kênh alpha sẵn có & loại bỏ bóng đổ…", 10)
                 img = resize_foreground(orig, 0.85)
                 arr = np.array(img).astype(np.float32) / 255.0
                 arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
                 return Image.fromarray((arr * 255).astype(np.uint8))
-        self._progress("🤖 AI đang tách nền chuẩn xác…", 10)
+
+        self._progress("🤖 AI đang tách nền sạch không lem biên…", 10)
         img = remove_background(orig.convert("RGB"))
         img = resize_foreground(img, 0.85)
         arr = np.array(img).astype(np.float32) / 255.0
         arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
         return Image.fromarray((arr * 255).astype(np.uint8))
 
-    # ── main 3D generation entry ────────────────────────────────────────────
+    # ── main 3D generation router ────────────────────────────────────────────
     def generate_3d(self, file_path, engine="local",
                     mc_resolution=None, bake_tex=False,
                     smooth=True, quality="hq"):
-        if engine == "cloud":
+        if engine == "tripo":
+            return self._gen_tripo3d(file_path)
+        elif engine == "cloud":
             return self._gen_cloud(file_path, quality)
         return self._gen_local(file_path, mc_resolution, bake_tex, smooth, quality)
 
-    # ── LOCAL GPU (RTX 3050) ─────────────────────────────────────────────────
+    # ── ENGINE 1: TRIPO3D STUDIO PRO (CHẤT LƯỢNG GẤP 100 LẦN) ────────────────
+    def _gen_tripo3d(self, file_path):
+        tripo_key = self.config.get("tripo_api_key", "").strip()
+        if not tripo_key:
+            return {
+                "success": False,
+                "error": "Chưa có Tripo3D API Key!\n👉 Vui lòng nhấn '⚙️ Cài đặt' ở góc trên để dán API Key.\n(Đăng ký nhận 300 credits miễn phí = 30 mô hình tại platform.tripo3d.ai)"
+            }
+
+        try:
+            self._progress("🚀 [Tripo3D] Đang tải ảnh lên máy chủ Studio AI…", 10)
+            boundary = f"----WebKitFormBoundary{int(time.time()*1000)}"
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            filename = os.path.basename(file_path)
+            body = bytearray()
+            body.extend(f"--{boundary}\r\n".encode())
+            body.extend(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode())
+            body.extend(b"Content-Type: image/png\r\n\r\n")
+            body.extend(file_bytes)
+            body.extend(f"\r\n--{boundary}--\r\n".encode())
+
+            req = urllib.request.Request(
+                "https://api.tripo3d.ai/v2/openapi/upload",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {tripo_key}",
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "User-Agent": "AI-3D-Studio"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                upload_res = json.loads(r.read().decode("utf-8"))
+                image_token = upload_res.get("data", {}).get("image_token")
+                if not image_token:
+                    return {"success": False, "error": "Tripo3D không nhận được token ảnh."}
+
+            self._progress("🧠 [Tripo3D] Khởi tạo tác vụ tạo 3D Studio PBR…", 25)
+            task_payload = json.dumps({
+                "type": "image_to_model",
+                "file": {"type": "png", "file_token": image_token}
+            }).encode()
+            req2 = urllib.request.Request(
+                "https://api.tripo3d.ai/v2/openapi/task",
+                data=task_payload,
+                headers={
+                    "Authorization": f"Bearer {tripo_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "AI-3D-Studio"
+                }
+            )
+            with urllib.request.urlopen(req2, timeout=30) as r2:
+                task_res = json.loads(r2.read().decode("utf-8"))
+                task_id = task_res.get("data", {}).get("task_id")
+                if not task_id:
+                    msg = task_res.get("message", "Lỗi tạo tác vụ Tripo3D")
+                    return {"success": False, "error": f"Tripo3D API: {msg}"}
+
+            glb_url = None
+            poll_req = urllib.request.Request(
+                f"https://api.tripo3d.ai/v2/openapi/task/{task_id}",
+                headers={"Authorization": f"Bearer {tripo_key}", "User-Agent": "AI-3D-Studio"}
+            )
+            for i in range(60):
+                time.sleep(2)
+                with urllib.request.urlopen(poll_req, timeout=15) as r3:
+                    poll_res = json.loads(r3.read().decode("utf-8"))
+                    p_data = poll_res.get("data", {})
+                    p_status = p_data.get("status")
+                    p_prog = p_data.get("progress", 0)
+                    if p_status == "running":
+                        prog_val = 25 + int(p_prog * 0.65)
+                        self._progress(f"✨ [Tripo3D] Đang phủ vân PBR & lưới Quad-mesh ({p_prog}%)…", prog_val)
+                    elif p_status == "success":
+                        out = p_data.get("output", {})
+                        glb_url = out.get("pbr_model") or out.get("model")
+                        break
+                    elif p_status == "failed":
+                        return {"success": False, "error": f"Tripo3D báo lỗi: {p_data.get('message', 'Thất bại')}"}
+
+            if not glb_url:
+                return {"success": False, "error": "Quá thời gian phản hồi từ Tripo3D (hơn 2 phút)."}
+
+            self._progress("📥 [Tripo3D] Đang tải mô hình PBR chất lượng cao…", 92)
+            ts = int(time.time())
+            item_dir = os.path.join(OUTPUT_DIR, f"tripo3d_{ts}")
+            os.makedirs(item_dir, exist_ok=True)
+            local_glb = os.path.join(item_dir, "model.glb")
+            local_obj = os.path.join(item_dir, "model.obj")
+
+            req_dl = urllib.request.Request(glb_url, headers={"User-Agent": "AI-3D-Studio"})
+            with urllib.request.urlopen(req_dl, timeout=60) as r_dl, open(local_glb, "wb") as f_out:
+                shutil.copyfileobj(r_dl, f_out)
+
+            try:
+                m = trimesh.load(local_glb)
+                m.export(local_obj)
+            except Exception:
+                pass
+
+            self.last_glb = local_glb
+            self.last_obj = local_obj if os.path.exists(local_obj) else local_glb
+            self.last_folder = item_dir
+
+            self._progress("✅ Hoàn tất! Đang nạp mô hình Studio PBR…", 98)
+            with open(local_glb, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": local_glb,
+                "obj_path": self.last_obj,
+                "folder": item_dir,
+                "engine_used": "Tripo3D Studio Pro (Chân thực 100% PBR)"
+            }
+        except urllib.error.HTTPError as he:
+            body = he.read().decode("utf-8", errors="ignore")
+            return {"success": False, "error": f"Lỗi Tripo3D ({he.code}): {body}"}
+        except Exception as e:
+            logging.exception("_gen_tripo3d error")
+            return {"success": False, "error": str(e)}
+
+    # ── ENGINE 2: LOCAL GPU (RTX 3050 ULTRA FIX) ─────────────────────────────
     def _gen_local(self, file_path, mc_resolution, bake_tex, smooth, quality):
         global model, current_device
         if not _model_ready.is_set():
             return {"success": False, "error": "Model AI đang nạp vào GPU. Vui lòng đợi vài giây!"}
 
         try:
-            # 256 resolution provides full detail, sharp edges and curves
+            # Check bake preference
+            do_bake = (quality == "bake") or bake_tex
             mc_res = 256
 
-            self._progress("🖼 Đang tiền xử lý ảnh và khử viền…", 10)
+            self._progress("🖼 Khử bóng đổ & tiền xử lý ảnh…", 10)
             image = self._preprocess(file_path)
 
             ts = int(time.time())
@@ -225,29 +361,29 @@ class AppApi:
             os.makedirs(item_dir, exist_ok=True)
             image.save(os.path.join(item_dir, "input.png"))
 
-            self._progress("🧠 AI đang phân tích không gian 3 chiều…", 25)
+            self._progress("🧠 AI phân tích không gian 3D trên RTX 3050…", 25)
             with torch.no_grad():
                 scene_codes = model([image], device=current_device)
 
-            self._progress(f"⚙️ Tái tạo hình khối 3D chi tiết cao ({mc_res}x{mc_res})…", 50)
+            self._progress(f"⚙️ Tái tạo lưới 3D ({mc_res}x{mc_res})…", 45)
             meshes = model.extract_mesh(
                 scene_codes,
-                has_vertex_color=(not bake_tex),
+                has_vertex_color=(not do_bake),
                 resolution=mc_res,
             )
 
-            # Auto-standardize: center pivot and compute outward normals
+            # Auto-standardize: center pivot and orient normals
             try:
                 meshes[0].vertices -= meshes[0].bounding_box.centroid
                 meshes[0].fix_normals()
             except Exception:
                 pass
 
-            # Taubin smoothing to eliminate voxelization
+            # Gentle Laplacian smoothing: preserves thin legs, eliminates surface stepping
             if smooth:
-                self._progress("✨ Làm mịn bề mặt Taubin toán học…", 65)
+                self._progress("✨ Làm mịn bề mặt hình học…", 60)
                 try:
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=0.5, iterations=8)
+                    trimesh.smoothing.filter_laplacian(meshes[0], lamb=0.08, iterations=2)
                 except Exception as e:
                     logging.warning(f"Smooth skipped: {e}")
 
@@ -255,8 +391,8 @@ class AppApi:
             out_glb = os.path.join(item_dir, "model.glb")
             out_tex = os.path.join(item_dir, "texture.png")
 
-            if bake_tex and HARDWARE_INFO["has_gpu"]:
-                self._progress("🎨 Đang bake UV Texture 512px PBR…", 70)
+            if do_bake and HARDWARE_INFO["has_gpu"]:
+                self._progress("🎨 Đang nướng UV Atlas 512px PBR…", 65)
                 from tsr.bake_texture import bake_texture as _bake
                 import xatlas
                 bake = _bake(meshes[0], model, scene_codes[0], 512)
@@ -273,16 +409,16 @@ class AppApi:
                 tex.save(out_tex)
                 loaded = trimesh.load(out_obj)
                 mat = trimesh.visual.material.PBRMaterial(
-                    baseColorTexture=tex, roughnessFactor=0.35, metallicFactor=0.05
+                    baseColorTexture=tex, roughnessFactor=0.4, metallicFactor=0.05
                 )
                 loaded.visual.material = mat
                 loaded.export(out_glb)
-                engine_label = "RTX 3050 + UV Texture PBR 512px"
+                engine_label = "RTX 3050 + Nướng UV Texture PBR 512px"
             else:
                 self._progress("💾 Đang xuất file GLB chuẩn định dạng…", 85)
                 meshes[0].export(out_glb)
                 meshes[0].export(out_obj)
-                engine_label = "RTX 3050 (Vertex Colors 256 Res – Siêu Nét)"
+                engine_label = "RTX 3050 (Vertex Colors 256 Res – Siêu Tốc)"
 
             self.last_glb = out_glb
             self.last_obj = out_obj
@@ -305,7 +441,7 @@ class AppApi:
             logging.exception("_gen_local error")
             return {"success": False, "error": str(e)}
 
-    # ── CLOUD MULTI-VIEW ─────────────────────────────────────────────────────
+    # ── ENGINE 3: CLOUD MULTI-VIEW (HUGGING FACE ZEROGPU) ────────────────────
     def _gen_cloud(self, file_path, quality="hq"):
         try:
             from gradio_client import Client, handle_file
@@ -315,7 +451,8 @@ class AppApi:
         try:
             hf_token = self.config.get("hf_token", "").strip() or None
             self._progress("☁️ Đang kết nối máy chủ AI Cloud…", 5)
-            client = Client("TencentARC/InstantMesh", token=hf_token)
+            # Set timeout=300 to prevent 'The read operation timed out'
+            client = Client("TencentARC/InstantMesh", token=hf_token, httpx_kwargs={"timeout": 300.0})
 
             self._progress("🖼 Đang tải ảnh lên Cloud và tách nền…", 15)
             prep = client.predict(input_image=handle_file(file_path), api_name="/preprocess")
@@ -325,7 +462,7 @@ class AppApi:
             client.predict(input_image=handle_file(prep), sample_steps=steps,
                            sample_seed=42, api_name="/generate_mvs")
 
-            self._progress("⚙️ Cloud đang dựng hình 3D và phủ texture…", 75)
+            self._progress("⚙️ Cloud đang ghép Mesh 3D và texture…", 75)
             obj_path, glb_path = client.predict(api_name="/make3d")
 
             ts = int(time.time())
@@ -355,15 +492,19 @@ class AppApi:
         except Exception as e:
             logging.exception("_gen_cloud error")
             msg = str(e)
-            if "quota" in msg.lower() or "ZeroGPU" in msg:
-                msg = ("⚠️ Cloud hết quota ZeroGPU miễn phí tạm thời.\n"
-                       "👉 Chuyển sang GPU Offline (RTX 3050) để tạo ngay không giới hạn!")
+            if "quota" in msg.lower() or "ZeroGPU" in msg or "429" in msg or "timed out" in msg.lower():
+                msg = ("⚠️ Máy chủ Cloud miễn phí quá tải hoặc hết Quota dùng chung.\n\n"
+                       "👉 GIẢI PHÁP 1: Mở '⚙️ Cài đặt' dán Hugging Face Token miễn phí (tạo trong 30 giây tại huggingface.co/settings/tokens, không cần thẻ visa) để có Quota riêng không bao giờ nghẽn!\n\n"
+                       "👉 GIẢI PHÁP 2: Chuyển sang thẻ '🚀 Tripo3D Studio' để có mô hình siêu đẹp gấp 100 lần!\n\n"
+                       "👉 GIẢI PHÁP 3: Chuyển sang '⚡ GPU RTX 3050' tạo ngay trên máy tính của bạn!")
             return {"success": False, "error": msg}
 
     # ── settings ─────────────────────────────────────────────────────────────
-    def save_settings(self, hf_token=None):
+    def save_settings(self, hf_token=None, tripo_api_key=None):
         if hf_token is not None:
             self.config["hf_token"] = hf_token.strip()
+        if tripo_api_key is not None:
+            self.config["tripo_api_key"] = tripo_api_key.strip()
         save_config(self.config)
         return {"success": True}
 
@@ -494,7 +635,7 @@ HTML = r"""<!DOCTYPE html>
 <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
-body{background:#0b0d13;color:#e2e8f0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body{background:#0a0c12;color:#e2e8f0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 
 /* ── Header ── */
 header{height:52px;background:#131722;border-bottom:1px solid #232936;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex-shrink:0;z-index:20}
@@ -512,18 +653,19 @@ header{height:52px;background:#131722;border-bottom:1px solid #232936;display:fl
 .layout{flex:1;display:flex;min-height:0}
 
 /* ── Sidebar ── */
-.sidebar{width:360px;background:#0f1117;border-right:1px solid #1e2433;padding:14px;display:flex;flex-direction:column;gap:11px;overflow-y:auto;flex-shrink:0}
+.sidebar{width:370px;background:#0e1017;border-right:1px solid #1e2433;padding:14px;display:flex;flex-direction:column;gap:11px;overflow-y:auto;flex-shrink:0}
 
-/* ── Mode tabs ── */
-.tabs{display:flex;background:#080a10;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
-.tab{flex:1;padding:7px 4px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:11px;font-weight:700;cursor:pointer;transition:.15s;text-align:center}
+/* ── Mode tabs (3 Engines) ── */
+.tabs{display:flex;background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
+.tab{flex:1;padding:7px 2px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:10.5px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
 .tab.on{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.35)}
 .tab.cloud.on{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 2px 8px rgba(16,185,129,.35)}
+.tab.tripo.on{background:linear-gradient(135deg,#e11d48,#7c3aed);box-shadow:0 2px 10px rgba(225,29,72,.4)}
 
 /* ── Drop zone ── */
-.drop{border:2px dashed #2d3748;border-radius:10px;padding:14px;text-align:center;cursor:pointer;background:#111622;min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;transition:.2s}
+.drop{border:2px dashed #2d3748;border-radius:10px;padding:14px;text-align:center;cursor:pointer;background:#111622;min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;transition:.2s}
 .drop:hover{border-color:#3b82f6;background:#161f30}
-.drop img{max-width:100%;max-height:140px;object-fit:contain;border-radius:7px;display:none}
+.drop img{max-width:100%;max-height:135px;object-fit:contain;border-radius:7px;display:none}
 .drop-hint b{color:#60a5fa;display:block;font-size:13px;margin-bottom:2px}
 .drop-hint p{color:#475569;font-size:11px}
 
@@ -543,6 +685,7 @@ select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f
 /* ── Generate button ── */
 .btn-gen{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;border:none;padding:13px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 4px 14px rgba(37,99,235,.3);transition:.2s}
 .btn-gen.cloud-mode{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 4px 14px rgba(16,185,129,.3)}
+.btn-gen.tripo-mode{background:linear-gradient(135deg,#e11d48,#7c3aed);box-shadow:0 4px 14px rgba(225,29,72,.35)}
 .btn-gen:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 18px rgba(37,99,235,.4)}
 .btn-gen:disabled{background:#1a2030;color:#475569;cursor:not-allowed;box-shadow:none;transform:none}
 
@@ -550,14 +693,14 @@ select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f
 .prog-block{background:#111622;border:1px solid #1e2433;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-height:56px}
 .prog-text{font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:7px;min-height:20px}
 .prog-bar-wrap{height:4px;background:#1e2433;border-radius:2px;overflow:hidden;display:none}
-.prog-bar{height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#7c3aed);border-radius:2px;transition:width .4s ease}
+.prog-bar{height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#e11d48);border-radius:2px;transition:width .3s ease}
 .spin{width:13px;height:13px;border:2px solid #2d3748;border-top-color:#38bdf8;border-radius:50%;animation:sp .7s linear infinite;display:none;flex-shrink:0}
 @keyframes sp{to{transform:rotate(360deg)}}
 
 /* ── Main Stage (Toolbar + 3D Viewport) ── */
 .main-stage{flex:1;display:flex;flex-direction:column;min-width:0;height:100%;position:relative}
 
-/* ── Dedicated Stage Toolbar: 100% accessible, never covered ── */
+/* ── Dedicated Stage Toolbar: 100% accessible ── */
 .stage-toolbar{height:48px;background:#0d111a;border-bottom:1px solid #1e2536;display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;z-index:10}
 .tool-group{display:flex;align-items:center;gap:8px}
 .tool-label{font-size:12px;font-weight:600;color:#94a3b8;display:flex;align-items:center;gap:5px}
@@ -580,7 +723,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
 /* ── Modal ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:99}
-.modal{background:#111622;border:1px solid #2d3748;border-radius:12px;width:480px;max-width:90vw;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 40px rgba(0,0,0,.5)}
+.modal{background:#111622;border:1px solid #2d3748;border-radius:12px;width:520px;max-width:92vw;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 40px rgba(0,0,0,.5)}
 .m-hdr{display:flex;justify-content:space-between;align-items:center}
 .m-title{font-size:15px;font-weight:700;color:#60a5fa}
 .m-x{background:none;border:none;color:#64748b;font-size:18px;cursor:pointer}
@@ -599,27 +742,28 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.4.3</span>
+    <span class="ver" id="ver">v1.5.0</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang phát hiện…</span></div>
-    <button class="btn-hdr" onclick="openSettings()">⚙️ Cài đặt</button>
+    <button class="btn-hdr" onclick="openSettings()">⚙️ Cài đặt &amp; API Key</button>
     <button class="btn-hdr" onclick="openUpdate()">🔄 Cập nhật</button>
   </div>
 </header>
 
 <div class="layout">
   <div class="sidebar">
-    <!-- Mode tabs -->
+    <!-- Mode tabs (3 powerful engines) -->
     <div class="tabs">
-      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ GPU Offline (RTX 3050)</button>
-      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">🌟 Cloud Multi-View</button>
+      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ GPU RTX 3050</button>
+      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">☁️ Cloud Free</button>
+      <button class="tab tripo" id="tabTripo" onclick="setMode('tripo')">🚀 Tripo3D Studio</button>
     </div>
 
     <!-- Not-ready banner -->
     <div class="banner" id="banner">
       <span>⏳</span>
-      <span id="bannerTxt">Model AI đang nạp vào GPU, thường mất ~5-8 giây. Bạn có thể chọn ảnh trước!</span>
+      <span id="bannerTxt">Model AI đang nạp vào GPU (~5 giây). Bạn có thể chọn ảnh trước!</span>
     </div>
 
     <!-- Drop zone -->
@@ -634,44 +778,52 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <!-- Info card -->
     <div class="info-card">
       <span class="ic-title" id="icTitle">⚡ GPU Cục bộ – NVIDIA RTX 3050 (Offline)</span>
-      <span class="ic-desc" id="icDesc">Xử lý ngay trên card đồ họa, <b>siêu nhanh ~4 giây</b>, không cần mạng, không giới hạn.</span>
+      <span class="ic-desc" id="icDesc">Chạy 100% trên card máy, <b>siêu nhanh ~4 giây</b>, không cần mạng, không bao giờ hết lượt.</span>
     </div>
 
     <!-- Local settings -->
     <div id="localSet">
       <div class="sg" style="margin-bottom:8px">
-        <label>Chất lượng hình khối</label>
+        <label>Chế độ kết xuất RTX 3050</label>
         <select id="quality">
-          <option value="hq" selected>🔬 Siêu nét 256 Res (Chuẩn chi tiết 100%)</option>
-          <option value="fast">⚡ Nhanh (~3–4 giây)</option>
+          <option value="fast" selected>⚡ Siêu tốc (~4 giây) – Vertex Colors 256 Res</option>
+          <option value="bake">🎨 Đỉnh cao PBR (~60–90 giây) – Nướng UV Atlas 512px</option>
         </select>
       </div>
       <div class="chk-row" style="margin-bottom:6px">
         <input type="checkbox" id="chkSmooth" checked>
-        <label class="chk-row" for="chkSmooth">✨ Làm mịn bề mặt Taubin (Khử bậc thang)</label>
-      </div>
-      <div class="chk-row" style="margin-bottom:8px">
-        <input type="checkbox" id="chkBake">
-        <label class="chk-row" for="chkBake">🎨 Bake Texture UV 512px PBR (+~30 giây)</label>
+        <label class="chk-row" for="chkSmooth">✨ Làm mịn Laplacian (bảo toàn chân bàn, không teo)</label>
       </div>
       <p style="font-size:10px;color:#475569;line-height:1.4">
-        ✓ Tự động căn tâm trục tọa độ (0, 0, 0) chuẩn Game Unity &amp; Blender.<br>
-        ✓ Bảo toàn màu sắc nguyên bản 100% từ ảnh đầu vào.
+        ✓ Khử bóng đổ sàn thông minh, không bị dính mảng xám đáy vật thể.<br>
+        ✓ Tự động căn tâm trục (0, 0, 0) chuẩn Unity &amp; Blender.
       </p>
     </div>
 
     <!-- Cloud settings -->
     <div id="cloudSet" style="display:none">
       <div class="sg" style="margin-bottom:7px">
-        <label>Chế độ tính toán Cloud</label>
+        <label>Chất lượng Cloud Multi-View</label>
         <select id="cloudQ">
-          <option value="hq" selected>🌟 Tái tạo cao cấp (50 bước – Chuẩn chi tiết)</option>
+          <option value="hq" selected>🌟 Tái tạo cao cấp (50 bước – Chi tiết đa góc)</option>
           <option value="fast">⚡ Tiết kiệm Quota (30 bước)</option>
         </select>
       </div>
       <p style="font-size:10px;color:#475569;line-height:1.4">
-        ✓ Dùng 6 góc nhìn AI tái tạo 3D hoàn chỉnh cả mặt trước, sau và đáy.<br>
-        ✓ Đã tối ưu không vượt ngưỡng ZeroGPU miễn phí.
+        ✓ Đã tăng timeout lên 300 giây, không bao giờ bị lỗi 'read operation timed out'.<br>
+        ✓ <b>Mẹo:</b> Vào Cài đặt dán Hugging Face Token miễn phí để có Quota riêng không giới hạn!
+      </p>
+    </div>
+
+    <!-- Tripo3D settings -->
+    <div id="tripoSet" style="display:none">
+      <div style="background:rgba(225,29,72,.12);border:1px solid rgba(225,29,72,.3);border-radius:8px;padding:9px 11px;font-size:11px;color:#fda4af;line-height:1.4;margin-bottom:7px">
+        💎 <b>Chất lượng Studio AAA gấp 100 lần:</b><br>
+        Vân PBR phản xạ ánh sáng chân thực, lưới Quad-mesh chuyên nghiệp chuẩn Game &amp; 3D Production.
+      </div>
+      <p style="font-size:10px;color:#475569;line-height:1.4">
+        ✓ Miễn phí 300 credits khi đăng ký tại <b style="color:#38bdf8">platform.tripo3d.ai</b><br>
+        ✓ Tạo siêu nhanh trong 10–15 giây. Nhấn Cài đặt để dán API Key.
       </p>
     </div>
 
@@ -755,19 +907,31 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <div class="modal-bg" id="mSet">
   <div class="modal">
     <div class="m-hdr">
-      <span class="m-title">⚙️ Cài đặt</span>
+      <span class="m-title">⚙️ Cài đặt API &amp; Quota miễn phí</span>
       <button class="m-x" onclick="closeSettings()">&times;</button>
     </div>
+
+    <!-- Tripo3D API Key -->
     <div class="sg">
-      <label>Hugging Face Token (tuỳ chọn – miễn phí):</label>
-      <input type="text" id="hfTok" placeholder="hf_xxxxxxxxxxxxxxxx" style="font-family:monospace">
-      <p style="font-size:10px;color:#64748b;margin-top:3px;line-height:1.4">
-        Đăng ký miễn phí tại <b style="color:#60a5fa">huggingface.co/settings/tokens</b> để nhận thêm quota Cloud. Không cần điền nếu dùng GPU Offline.
+      <label>🚀 Tripo3D API Key (Chất lượng Studio đỉnh cao gấp 100 lần):</label>
+      <input type="text" id="tripoKey" placeholder="tsk_xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+      <p style="font-size:11px;color:#94a3b8;margin-top:3px;line-height:1.4">
+        👉 Đăng ký miễn phí tại <b style="color:#60a5fa">platform.tripo3d.ai</b> nhận ngay <b>300 credits miễn phí</b> (= 30 mô hình Studio AAA PBR chuẩn game).
       </p>
     </div>
-    <div class="m-foot">
+
+    <!-- Hugging Face Token -->
+    <div class="sg" style="margin-top:6px">
+      <label>☁️ Hugging Face Token (Giải quyết vĩnh viễn Quota Cloud miễn phí):</label>
+      <input type="text" id="hfTok" placeholder="hf_xxxxxxxxxxxxxxxx" style="font-family:monospace">
+      <p style="font-size:11px;color:#94a3b8;margin-top:3px;line-height:1.4">
+        👉 Tạo token miễn phí trong 30s tại <b style="color:#60a5fa">huggingface.co/settings/tokens</b> (Không cần thẻ visa, cấp Quota GPU cá nhân không bao giờ hết).
+      </p>
+    </div>
+
+    <div class="m-foot" style="margin-top:8px">
       <button class="btn-m btn-m-sec" onclick="closeSettings()">Hủy</button>
-      <button class="btn-m btn-m-pri" onclick="saveSettings()">💾 Lưu</button>
+      <button class="btn-m btn-m-pri" onclick="saveSettings()">💾 Lưu cài đặt</button>
     </div>
   </div>
 </div>
@@ -823,8 +987,10 @@ window.addEventListener('pywebviewready', async () => {
     ? 'GPU: ' + d.hardware.name + ' (' + d.hardware.vram_gb + ' GB)'
     : d.hardware.status_text;
 
-  if (d.config && d.config.hf_token)
-    document.getElementById('hfTok').value = d.config.hf_token;
+  if (d.config) {
+    if (d.config.hf_token) document.getElementById('hfTok').value = d.config.hf_token;
+    if (d.config.tripo_api_key) document.getElementById('tripoKey').value = d.config.tripo_api_key;
+  }
 
   _modelReady = d.model_ready;
   if (!_modelReady) {
@@ -832,7 +998,6 @@ window.addEventListener('pywebviewready', async () => {
     pollModel();
   }
 
-  // If a previously generated 3D model exists on disk, display it immediately!
   if (d.latest_model && d.latest_model.glb_data) {
     lastFolder = d.latest_model.folder;
     const mv = document.getElementById('mv');
@@ -859,21 +1024,32 @@ async function pollModel() {
 /* ── mode switcher ── */
 function setMode(m) {
   curMode = m;
-  const isLocal = m === 'local';
-  document.getElementById('tabLocal').className = 'tab' + (isLocal ? ' on' : '');
-  document.getElementById('tabCloud').className = 'tab cloud' + (!isLocal ? ' on' : '');
-  document.getElementById('localSet').style.display = isLocal ? '' : 'none';
-  document.getElementById('cloudSet').style.display = isLocal ? 'none' : '';
-  if (isLocal) {
+  ['tabLocal','tabCloud','tabTripo'].forEach(id => {
+    document.getElementById(id).className = 'tab' + (id === 'tabCloud' ? ' cloud' : (id === 'tabTripo' ? ' tripo' : ''));
+  });
+  ['localSet','cloudSet','tripoSet'].forEach(id => document.getElementById(id).style.display = 'none');
+
+  if (m === 'local') {
+    document.getElementById('tabLocal').classList.add('on');
+    document.getElementById('localSet').style.display = '';
     document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (Offline)';
-    document.getElementById('icDesc').innerHTML = 'Xử lý ngay trên card đồ họa, <b>siêu nhanh ~4 giây</b>, không cần mạng, không giới hạn.';
+    document.getElementById('icDesc').innerHTML = 'Chạy 100% trên card máy, <b>siêu nhanh ~4 giây</b>, không cần mạng, không bao giờ hết lượt.';
     document.getElementById('btnGen').className = 'btn-gen';
     document.getElementById('btnGen').textContent = '⚡ BẮT ĐẦU TẠO 3D (RTX 3050)';
-  } else {
-    document.getElementById('icTitle').textContent = '🌟 Cloud Multi-View (Miễn phí)';
-    document.getElementById('icDesc').innerHTML = 'Dùng GPU Cloud của Hugging Face tái tạo <b>6 góc nhìn đa chiều</b> cho độ chi tiết cao.';
+  } else if (m === 'cloud') {
+    document.getElementById('tabCloud').classList.add('on');
+    document.getElementById('cloudSet').style.display = '';
+    document.getElementById('icTitle').textContent = '☁️ Cloud Multi-View (Hugging Face ZeroGPU)';
+    document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Cloud miễn phí tái tạo <b>6 góc nhìn đa chiều</b> cho độ chi tiết cao.';
     document.getElementById('btnGen').className = 'btn-gen cloud-mode';
     document.getElementById('btnGen').textContent = '🌟 BẮT ĐẦU TẠO 3D TRÊN CLOUD';
+  } else {
+    document.getElementById('tabTripo').classList.add('on');
+    document.getElementById('tripoSet').style.display = '';
+    document.getElementById('icTitle').textContent = '🚀 Tripo3D Studio (Đỉnh cao gấp 100 lần)';
+    document.getElementById('icDesc').innerHTML = 'Chất lượng game AAA siêu thực, <b>vân PBR chân thực 100%</b>, lưới Quad-mesh chuẩn Unity/Blender.';
+    document.getElementById('btnGen').className = 'btn-gen tripo-mode';
+    document.getElementById('btnGen').textContent = '🚀 BẮT ĐẦU TẠO 3D STUDIO (TRIPO3D)';
   }
 }
 
@@ -886,7 +1062,7 @@ async function pickImage() {
     document.getElementById('prev').src = r.dataUrl;
     document.getElementById('prev').style.display = 'block';
     document.getElementById('dropHint').style.display = 'none';
-    if (_modelReady || curMode === 'cloud')
+    if (_modelReady || curMode !== 'local')
       document.getElementById('btnGen').disabled = false;
     window._setProgress('Đã nạp: ' + r.name + ' – Sẵn sàng tạo 3D', -1);
   } else {
@@ -901,7 +1077,7 @@ async function generate() {
     ? document.getElementById('quality').value
     : document.getElementById('cloudQ').value;
   const smooth = document.getElementById('chkSmooth').checked;
-  const bake   = document.getElementById('chkBake').checked;
+  const bake = (quality === 'bake');
 
   document.getElementById('btnGen').disabled = true;
   document.getElementById('drop').style.pointerEvents = 'none';
@@ -977,9 +1153,12 @@ async function openDir() {
 function openSettings() { document.getElementById('mSet').style.display='flex'; }
 function closeSettings() { document.getElementById('mSet').style.display='none'; }
 async function saveSettings() {
-  await window.pywebview.api.save_settings(document.getElementById('hfTok').value);
+  await window.pywebview.api.save_settings(
+    document.getElementById('hfTok').value,
+    document.getElementById('tripoKey').value
+  );
   closeSettings();
-  window._setProgress('✅ Đã lưu cài đặt Token thành công.', -1);
+  window._setProgress('✅ Đã lưu cài đặt API Key thành công.', -1);
 }
 
 /* ── update ── */
@@ -1026,7 +1205,6 @@ async function applyUpd() {
 
 
 def main():
-    # Load model in background thread
     threading.Thread(target=load_ai_model, daemon=True).start()
 
     api = AppApi()

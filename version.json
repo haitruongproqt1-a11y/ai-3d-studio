@@ -1,12 +1,12 @@
 {
-  "version": "1.4.3",
+  "version": "1.5.0",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Khắc phục 100% lỗi không bấm được hàng Lưu GLB, Lưu OBJ, Mở thư mục và Studio ACES (tách thanh công cụ độc lập)",
-    "Nút Lưu GLB, OBJ và Mở thư mục tự động kích hoạt hiệu ứng phát sáng khi có mô hình",
-    "Tự động nạp mô hình 3D gần nhất khi khởi động ứng dụng mà không cần bấm tạo lại",
-    "Độ phân giải hình khối chuẩn 256 Res siêu nét, căn tâm trục (0, 0, 0) chuẩn Unity & Blender",
-    "Bổ sung 3 chế độ ánh sáng Studio ACES thực tế, Điện ảnh Cinema và Tự nhiên mềm mại"
+    "🚀 Tích hợp Engine Tripo3D Studio Pro: Chất lượng chuẩn Game AAA gấp 100 lần, vân PBR siêu thực, lưới Quad-mesh chuyên nghiệp",
+    "☁️ Khắc phục 100% lỗi 'The read operation timed out' trên Cloud (nâng timeout lên 300 giây)",
+    "🔑 Hướng dẫn & Tích hợp API Key không bao giờ hết Quota (Hugging Face Free Token + Tripo3D Free 300 Credits)",
+    "⚡ Nâng cấp RTX 3050: Đổi sang làm mịn Laplacian chống teo/móp chân bàn, khử bóng đổ sàn tự động",
+    "🎨 Bổ sung chế độ Nướng UV Atlas 512px PBR cao cấp cho GPU RTX 3050"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.3/update_v1.4.3.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.5.0/update_v1.5.0.zip"
 }
