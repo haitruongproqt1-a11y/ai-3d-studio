@@ -23,7 +23,7 @@ import cv2
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.4.1"
+APP_VERSION = "v1.4.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -214,11 +214,11 @@ class AppApi:
 
             # ── mesh extraction ────────────────────────────────────────────
             self._progress("⚙️ Đang tái tạo hình khối 3D…", 45)
-            # with_texture=True → vertex colors, no UV bake needed (FAST)
-            # with_texture=False → raw geometry only
+            # has_vertex_color=True → vertex colors from TripoSR (fast, no UV baking needed)
+            # has_vertex_color=False → raw geometry only (used before bake)
             meshes = model.extract_mesh(
                 scene_codes,
-                with_texture=(not bake_tex),   # vertex colors when no baking
+                has_vertex_color=(not bake_tex),
                 resolution=mc_resolution,
             )
 
@@ -226,7 +226,7 @@ class AppApi:
             if smooth:
                 self._progress("✨ Làm mịn bề mặt Taubin…", 60)
                 try:
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=8)
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=0.5, iterations=8)
                 except Exception as e:
                     logging.warning(f"Smooth skipped: {e}")
 
@@ -301,7 +301,7 @@ class AppApi:
             self._progress("🖼 Đang tải ảnh lên Cloud và tách nền…", 15)
             prep = client.predict(input_image=handle_file(file_path), api_name="/preprocess")
 
-            steps = 30 if quality == "hq" else 20
+            steps = 50 if quality == "hq" else 30   # InstantMesh min=30
             self._progress(f"🔮 Cloud đang tạo đa góc nhìn ({steps} bước)…", 35)
             client.predict(input_image=handle_file(prep), sample_steps=steps,
                            sample_seed=42, api_name="/generate_mvs")

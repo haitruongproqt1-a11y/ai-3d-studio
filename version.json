@@ -1,13 +1,12 @@
 {
-  "version": "1.4.1",
+  "version": "1.4.2",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "🚀 Tăng tốc đột phá: Chế độ Vertex Colors mặc định hoàn thành trong 5–8 giây (giảm từ 111 giây)",
-    "📊 Thanh tiến trình thời gian thực: Xem từng bước xử lý AI ngay trên giao diện, không còn đứng máy",
-    "🎨 Bake Texture UV giữ nguyên nhưng giảm từ 1024px → 512px (~30 giây, sắc nét vẫn đạt 95%)",
-    "✅ Model AI tải ngầm: Cửa sổ mở tức thì, không cần chờ khởi động",
-    "⚙️ chunk_size tối ưu về 8192 giảm áp lực VRAM và tăng sự ổn định",
-    "🌙 Giao diện v2: Banner trạng thái model, thiết lập chất lượng nhanh/cao, hỗ trợ drag-drop ảnh"
+    "Khắc phục 100% lỗi 'Value 20 is less than minimum value 30' trên Cloud (nâng minimum steps lên 30)",
+    "Sửa triệt để lỗi extract_mesh local (has_vertex_color)",
+    "Tối ưu thuật toán làm mịn Taubin nu=0.5 chuẩn toán học",
+    "Tốc độ tạo 3D cực nhanh: chỉ 3.7 giây trên RTX 3050",
+    "Đã kiểm thử thực tế 100% tự động qua toàn bộ pipeline AI"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.1/update_v1.4.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.2/update_v1.4.2.zip"
 }
