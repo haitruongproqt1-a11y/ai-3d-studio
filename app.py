@@ -21,10 +21,11 @@ from tsr.system import TSR
 from tsr.utils import remove_background, resize_foreground
 import trimesh
 import cv2
+import rembg
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.5.2"
+APP_VERSION = "v1.5.3"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -189,7 +190,11 @@ class AppApi:
         self._progress("🤖 AI đang phân đoạn & tách nền u2net…", 10)
         orig = Image.open(file_path).convert("RGB")
         # Always run rembg to eliminate fake checkerboards, drop shadows, and complex backgrounds
-        clean_rgba = rembg.remove(orig)
+        try:
+            clean_rgba = rembg.remove(orig)
+        except Exception as e:
+            logging.warning(f"rembg remove warning: {e}")
+            clean_rgba = remove_background(orig)
         fg = resize_foreground(clean_rgba, 0.85)
         arr = np.array(fg).astype(np.float32) / 255.0
         arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
@@ -816,7 +821,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.5.2</span>
+    <span class="ver" id="ver">v1.5.3</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang phát hiện…</span></div>
@@ -829,8 +834,8 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
   <div class="sidebar">
     <!-- Mode tabs (3 powerful engines) -->
     <div class="tabs">
-      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ GPU RTX 3050</button>
-      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">☁️ Cloud Free</button>
+      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ GPU RTX 3050 (Offline)</button>
+      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">🌐 Hybrid AI (Cloud)</button>
       <button class="tab tripo" id="tabTripo" onclick="setMode('tripo')">🚀 Tripo3D Studio</button>
     </div>
 
@@ -1118,22 +1123,22 @@ function setMode(m) {
   if (m === 'local') {
     document.getElementById('tabLocal').classList.add('on');
     document.getElementById('localSet').style.display = '';
-    document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (Offline)';
-    document.getElementById('icDesc').innerHTML = 'Chạy 100% trên card máy, <b>siêu nhanh ~4 giây</b>, không cần mạng, không bao giờ hết lượt.';
+    document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (100% Offline)';
+    document.getElementById('icDesc').innerHTML = 'Tạo 3D bằng chip AI trên card RTX 3050 máy bạn. <b>Siêu tốc ~3 giây</b>, hoàn toàn không cần mạng, không bao giờ hết lượt.';
     document.getElementById('btnGen').className = 'btn-gen';
-    document.getElementById('btnGen').textContent = '⚡ BẮT ĐẦU TẠO 3D (RTX 3050)';
+    document.getElementById('btnGen').textContent = '⚡ BẮT ĐẦU TẠO 3D (RTX 3050 OFFLINE)';
   } else if (m === 'cloud') {
     document.getElementById('tabCloud').classList.add('on');
     document.getElementById('cloudSet').style.display = '';
-    document.getElementById('icTitle').textContent = '☁️ Cloud Multi-View (Hugging Face ZeroGPU)';
-    document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Cloud miễn phí tái tạo <b>6 góc nhìn đa chiều</b> cho độ chi tiết cao.';
+    document.getElementById('icTitle').textContent = '🌐 Chế độ Hybrid AI – Kết hợp Cloud & RTX 3050';
+    document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Cloud miễn phí tái tạo <b>6 góc nhìn đa chiều 360°</b>, sau đó đưa về máy xử lý và nạp vào Studio ACES.';
     document.getElementById('btnGen').className = 'btn-gen cloud-mode';
-    document.getElementById('btnGen').textContent = '🌟 BẮT ĐẦU TẠO 3D TRÊN CLOUD';
+    document.getElementById('btnGen').textContent = '🌐 BẮT ĐẦU TẠO 3D HYBRID (CLOUD)';
   } else {
     document.getElementById('tabTripo').classList.add('on');
     document.getElementById('tripoSet').style.display = '';
-    document.getElementById('icTitle').textContent = '🚀 Tripo3D Studio (Đỉnh cao gấp 100 lần)';
-    document.getElementById('icDesc').innerHTML = 'Chất lượng game AAA siêu thực, <b>vân PBR chân thực 100%</b>, lưới Quad-mesh chuẩn Unity/Blender.';
+    document.getElementById('icTitle').textContent = '🚀 Tripo3D Studio (Chất lượng Game AAA Siêu Thực)';
+    document.getElementById('icDesc').innerHTML = 'Mô hình 3D chuẩn Studio thương mại, <b>vân PBR chân thực 100%</b>. Miễn phí 300 credits tại <b>platform.tripo3d.ai</b> rồi nạp vào bằng nút <b>📂 Nạp 3D ngoài</b>.';
     document.getElementById('btnGen').className = 'btn-gen tripo-mode';
     document.getElementById('btnGen').textContent = '🚀 BẮT ĐẦU TẠO 3D STUDIO (TRIPO3D)';
   }
