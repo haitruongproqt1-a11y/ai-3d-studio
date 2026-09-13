@@ -1,12 +1,13 @@
 {
-  "version": "1.5.3",
+  "version": "1.6.0",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Sửa triệt để lỗi 'name rembg is not defined' khi phân đoạn tách nền AI",
-    "Làm rõ 3 chế độ: GPU RTX 3050 Offline (Không cần mạng, siêu tốc 3s) và Hybrid AI Cloud (Đa góc nhìn)",
-    "Khắc phục 100% lỗi lệch tâm UV (Centroid offset) nướng PBR chuẩn màu như hình mẫu",
-    "Thêm nút '📂 Nạp 3D ngoài' trên thanh công cụ: Nạp trực tiếp mọi file .glb/.obj vào Studio ACES",
-    "Tăng cường độ rực rỡ màu sắc (Color Vibrance & Contrast Boost) cho GPU RTX 3050"
+    "Thêm tính năng mới: Tạo mô hình 3D từ văn bản (Text-to-3D) cực nhanh và thông minh",
+    "Nâng cấp RTX 3050 Offline lên Ultra HD 320 Marching Cubes: Góc cạnh sắc nét, chuẩn hình mẫu 100%",
+    "Thanh công cụ Studio ACES, Cinema, Tự nhiên đổi ánh sáng trực tiếp 1 chạm",
+    "Nút Lưu GLB (Unity), Lưu OBJ (Blender) và Mở thư mục luôn sẵn sàng và hoạt động mượt mà",
+    "Bảo vệ môi trường ảo .venv không bao giờ bị ảnh hưởng khi cập nhật OTA",
+    "Phần mềm chạy hoàn toàn độc lập trên máy tính qua file Chay_AI_3D_Studio.bat và Shortcut ngoài Desktop"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.5.3/update_v1.5.3.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.6.0/update_v1.6.0.zip"
 }
