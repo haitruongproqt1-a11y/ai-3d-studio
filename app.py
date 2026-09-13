@@ -24,7 +24,7 @@ import cv2
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.5.0"
+APP_VERSION = "v1.5.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -186,26 +186,12 @@ class AppApi:
 
     # ── image preprocessing ──────────────────────────────────────────────────
     def _preprocess(self, file_path: str) -> Image.Image:
-        orig = Image.open(file_path)
-        if orig.mode in ("RGBA", "LA"):
-            alpha = np.array(orig)[:, :, -1]
-            if (alpha < 240).any() and (alpha > 15).any():
-                # Remove floor drop shadow artifacts (alpha < 60)
-                alpha_clean = np.where(alpha < 60, 0, alpha)
-                orig_np = np.array(orig)
-                orig_np[:, :, -1] = alpha_clean
-                orig = Image.fromarray(orig_np)
-
-                self._progress("🖼 Dùng kênh alpha sẵn có & loại bỏ bóng đổ…", 10)
-                img = resize_foreground(orig, 0.85)
-                arr = np.array(img).astype(np.float32) / 255.0
-                arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
-                return Image.fromarray((arr * 255).astype(np.uint8))
-
-        self._progress("🤖 AI đang tách nền sạch không lem biên…", 10)
-        img = remove_background(orig.convert("RGB"))
-        img = resize_foreground(img, 0.85)
-        arr = np.array(img).astype(np.float32) / 255.0
+        self._progress("🤖 AI đang phân đoạn & tách nền u2net…", 10)
+        orig = Image.open(file_path).convert("RGB")
+        # Always run rembg to eliminate fake checkerboards, drop shadows, and complex backgrounds
+        clean_rgba = rembg.remove(orig)
+        fg = resize_foreground(clean_rgba, 0.85)
+        arr = np.array(fg).astype(np.float32) / 255.0
         arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
         return Image.fromarray((arr * 255).astype(np.uint8))
 
@@ -337,6 +323,18 @@ class AppApi:
             }
         except urllib.error.HTTPError as he:
             body = he.read().decode("utf-8", errors="ignore")
+            if "2010" in body or "purchase more credit" in body or "credit" in body.lower():
+                return {
+                    "success": False,
+                    "error": (
+                        "⚠️ Tripo3D thông báo: Tài khoản của bạn có 0 credit trên cổng Developer API.\n\n"
+                        "💡 GIẢI THÍCH:\n"
+                        "Tripo3D cho tạo miễn phí trên giao diện Web (tripo3d.ai), nhưng cổng kết nối API thì họ bắt buộc phải mua gói trả phí ($10-$30/tháng).\n\n"
+                        "👉 2 CÁCH DÙNG MIỄN PHÍ 100% NGON NHẤT CHO BẠN:\n"
+                        "1. Chuyển sang thẻ '⚡ GPU RTX 3050': Chạy 100% trên card máy, KHÔNG BAO GIỜ HẾT QUOTA, MIỄN PHÍ VĨNH VIỄN!\n"
+                        "2. Truy cập web tripo3d.ai dùng 300 credit miễn phí để tạo 3D, tải file .glb về và mở vào ứng dụng để lưu!"
+                    )
+                }
             return {"success": False, "error": f"Lỗi Tripo3D ({he.code}): {body}"}
         except Exception as e:
             logging.exception("_gen_tripo3d error")
@@ -362,6 +360,8 @@ class AppApi:
             image.save(os.path.join(item_dir, "input.png"))
 
             self._progress("🧠 AI phân tích không gian 3D trên RTX 3050…", 25)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             with torch.no_grad():
                 scene_codes = model([image], device=current_device)
 
@@ -742,7 +742,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.5.0</span>
+    <span class="ver" id="ver">v1.5.1</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang phát hiện…</span></div>

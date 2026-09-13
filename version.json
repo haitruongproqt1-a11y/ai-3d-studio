@@ -1,12 +1,12 @@
 {
-  "version": "1.5.0",
+  "version": "1.5.1",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "🚀 Tích hợp Engine Tripo3D Studio Pro: Chất lượng chuẩn Game AAA gấp 100 lần, vân PBR siêu thực, lưới Quad-mesh chuyên nghiệp",
-    "☁️ Khắc phục 100% lỗi 'The read operation timed out' trên Cloud (nâng timeout lên 300 giây)",
-    "🔑 Hướng dẫn & Tích hợp API Key không bao giờ hết Quota (Hugging Face Free Token + Tripo3D Free 300 Credits)",
-    "⚡ Nâng cấp RTX 3050: Đổi sang làm mịn Laplacian chống teo/móp chân bàn, khử bóng đổ sàn tự động",
-    "🎨 Bổ sung chế độ Nướng UV Atlas 512px PBR cao cấp cho GPU RTX 3050"
+    "Khử triệt để ảnh nền caro giả (fake transparent checkerboard) từ Google/Clipart bằng U2Net segmentation",
+    "Loại bỏ hoàn toàn bóng đổ sàn (drop shadow) giúp đáy bàn/vật thể sạch sẽ, chân bàn thẳng thớm không bị dính mảng xám",
+    "Tối ưu bộ nhớ CUDA (torch.cuda.empty_cache) chạy siêu mượt trên GPU RTX 3050 6GB",
+    "Thông báo chi tiết và hướng dẫn sử dụng Tripo3D web miễn phí khi gặp lỗi 2010 hết credit API",
+    "Sửa thuật toán làm mịn Laplacian lamb=0.08 bảo toàn 100% hình khối gốc của vật thể"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.5.0/update_v1.5.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.5.1/update_v1.5.1.zip"
 }
