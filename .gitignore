@@ -8,3 +8,4 @@ __pycache__/
 *.zip
 update_temp.zip
 update_extracted/
+config.json

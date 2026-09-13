@@ -26,7 +26,7 @@ import rembg
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.6.0"
+APP_VERSION = "v1.7.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -79,17 +79,20 @@ def load_ai_model():
         logging.error(f"Model load failed: {e}")
 
 def load_config():
+    cfg = {
+        "github_repo": DEFAULT_GITHUB_REPO,
+        "hf_token": "",
+        "tripo_api_key": "",
+        "meshy_api_key": ""
+    }
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+                cfg.update(loaded)
     except Exception:
         pass
-    return {
-        "github_repo": DEFAULT_GITHUB_REPO,
-        "hf_token": "",
-        "tripo_api_key": ""
-    }
+    return cfg
 
 def save_config(cfg):
     try:
@@ -98,13 +101,29 @@ def save_config(cfg):
     except Exception as e:
         logging.error(f"save_config: {e}")
 
+# ── Translation helper ──────────────────────────────────────────────────────
+def translate_to_en(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return ""
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={urllib.parse.quote(text)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            res = json.loads(r.read().decode("utf-8"))
+            translated = res[0][0][0]
+            if translated:
+                return translated
+    except Exception:
+        pass
+    return text
 
 # ── Texture & PBR helpers ───────────────────────────────────────────────────
 def enhance_texture(img: Image.Image) -> Image.Image:
     try:
-        img = ImageEnhance.Color(img).enhance(1.25)
-        img = ImageEnhance.Contrast(img).enhance(1.10)
-        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=110, threshold=3))
+        img = ImageEnhance.Color(img).enhance(1.30)
+        img = ImageEnhance.Contrast(img).enhance(1.15)
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=3))
     except Exception:
         pass
     return img
@@ -180,15 +199,15 @@ class AppApi:
     def is_model_ready(self):
         return _model_ready.is_set()
 
-    # ── live progress helper ─────────────────────────────────────────────────
+    # ── live progress helper (SAFE JSON ESCAPING) ─────────────────────────────
     def _progress(self, msg: str, pct: int = -1):
         if self._window:
-            safe = msg.replace("'", "\\'").replace("\n", " ")
-            self._window.evaluate_js(f"window._setProgress('{safe}', {pct});")
+            safe = json.dumps(msg)
+            self._window.evaluate_js(f"window._setProgress({safe}, {pct});")
 
     # ── image preprocessing ──────────────────────────────────────────────────
     def _preprocess(self, file_path: str) -> Image.Image:
-        self._progress("🤖 AI đang phân đoạn & tách nền chuẩn u2net…", 12)
+        self._progress("🤖 AI đang phân đoạn & tách nền chuẩn u2net…", 10)
         orig = Image.open(file_path).convert("RGB")
         try:
             clean_rgba = rembg.remove(orig)
@@ -201,39 +220,56 @@ class AppApi:
         return Image.fromarray((arr * 255).astype(np.uint8))
 
     # ── TEXT TO 3D PIPELINE ──────────────────────────────────────────────────
-    def generate_from_text(self, prompt: str, quality="ultra", smooth=True):
+    def generate_from_text(self, prompt: str, quality="pbr_1024", smooth=True, engine="local"):
         prompt = prompt.strip()
         if not prompt:
             return {"success": False, "error": "Vui lòng nhập mô tả văn bản cần tạo 3D!"}
 
+        if engine == "meshy":
+            return self._gen_meshy(prompt=prompt)
+
+        # Ensure AI model is ready on GPU
+        if not _model_ready.is_set():
+            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050 (~vài giây)…", 5)
+            _model_ready.wait(timeout=30)
+            if not _model_ready.is_set():
+                return {"success": False, "error": "Model AI vẫn đang nạp vào card GPU. Vui lòng thử lại sau vài giây!"}
+
         try:
-            self._progress(f"🎨 [Text-to-3D] AI đang phác họa hình mẫu 2D: '{prompt}'…", 8)
+            # 1. Translate prompt to English for highest concept accuracy
+            self._progress(f"🌐 Đang dịch & tối ưu câu lệnh: '{prompt}'…", 8)
+            prompt_en = translate_to_en(prompt)
+
+            # 2. Fetch studio-grade 2D concept image
+            self._progress(f"🎨 AI đang phác họa hình ảnh 2D từ ý tưởng ('{prompt_en}')…", 15)
             ts = int(time.time())
             item_dir = os.path.join(OUTPUT_DIR, f"txt_{ts}")
             os.makedirs(item_dir, exist_ok=True)
             concept_file = os.path.join(item_dir, "concept.png")
 
-            # Craft studio 3d prompt for clean object isolation
-            clean_prompt = f"{prompt}, centered studio 3d object, full view, pure white background, hyperrealistic, sharp focus, 8k"
+            clean_prompt = f"{prompt_en}, centered studio 3d object, full view, pure white background, hyperrealistic, sharp focus, 8k"
             encoded_prompt = urllib.parse.quote(clean_prompt)
             url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true&seed={ts % 10000}"
 
-            req = urllib.request.Request(url, headers={"User-Agent": "AI-3D-Studio/1.6.0"})
-            with urllib.request.urlopen(req, timeout=20) as r, open(concept_file, "wb") as f_img:
+            req = urllib.request.Request(url, headers={"User-Agent": "AI-3D-Studio/1.7.0"})
+            with urllib.request.urlopen(req, timeout=25) as r, open(concept_file, "wb") as f_img:
                 shutil.copyfileobj(r, f_img)
 
-            # Convert concept image to base64 for preview in UI
+            # Send concept image to UI preview immediately
             with open(concept_file, "rb") as f_img:
                 b64_img = base64.b64encode(f_img.read()).decode()
             concept_data_url = f"data:image/png;base64,{b64_img}"
 
-            self._progress("⚡ Chuyển hình phác họa sang nhân AI RTX 3050 Offline…", 20)
+            if self._window:
+                safe_url = json.dumps(concept_data_url)
+                self._window.evaluate_js(f"window._showConcept({safe_url});")
+
+            # 3. Feed directly into RTX 3050 3D reconstruction!
+            self._progress("⚡ Đưa hình phác họa vào GPU RTX 3050 tái tạo 3D…", 28)
             res = self._gen_local(
                 concept_file,
-                mc_resolution=320 if quality == "ultra" else 256,
-                bake_tex=(quality == "bake"),
-                smooth=smooth,
                 quality=quality,
+                smooth=smooth,
                 target_dir=item_dir
             )
             if res.get("success"):
@@ -248,22 +284,27 @@ class AppApi:
     # ── main 3D generation router ────────────────────────────────────────────
     def generate_3d(self, file_path, engine="local",
                     mc_resolution=None, bake_tex=False,
-                    smooth=True, quality="ultra"):
-        if engine == "tripo":
+                    smooth=True, quality="pbr_1024"):
+        if engine == "meshy":
+            return self._gen_meshy(file_path=file_path)
+        elif engine == "tripo":
             return self._gen_tripo3d(file_path)
         elif engine == "cloud":
             return self._gen_cloud(file_path, quality)
-        return self._gen_local(file_path, mc_resolution, bake_tex, smooth, quality)
+        return self._gen_local(file_path, quality=quality, smooth=smooth)
 
-    # ── ENGINE 1: LOCAL GPU (RTX 3050 ULTRA HD 320) ──────────────────────────
-    def _gen_local(self, file_path, mc_resolution=None, bake_tex=False, smooth=True, quality="ultra", target_dir=None):
+    # ── ENGINE 1: LOCAL GPU (RTX 3050 TAUBIN SMOOTHING + 1024 PBR ATLAS) ─────
+    def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None):
         global model, current_device
         if not _model_ready.is_set():
-            return {"success": False, "error": "Model AI đang nạp vào RTX 3050. Vui lòng đợi vài giây!"}
+            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050…", 5)
+            _model_ready.wait(timeout=30)
+            if not _model_ready.is_set():
+                return {"success": False, "error": "Model AI đang nạp vào RTX 3050. Vui lòng đợi vài giây!"}
 
         try:
-            do_bake = (quality == "bake") or bake_tex
-            mc_res = 320 if quality == "ultra" else 256
+            do_bake = (quality == "pbr_1024" or quality == "bake")
+            mc_res = 320 if quality == "ultra_320" else 256
 
             self._progress("🖼 Khử bóng đổ, tách viền & tiền xử lý ảnh chuẩn…", 15)
             image = self._preprocess(file_path)
@@ -277,39 +318,42 @@ class AppApi:
 
             image.save(os.path.join(item_dir, "input.png"))
 
-            self._progress(f"🧠 RTX 3050 suy luận không gian 3D Tensor ({HARDWARE_INFO['name']})…", 30)
+            self._progress(f"🧠 RTX 3050 suy luận Tensor không gian ({HARDWARE_INFO['name']})…", 30)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
             with torch.no_grad():
                 scene_codes = model([image], device=current_device)
 
-            self._progress(f"⚙️ Tái tạo lưới Marching Cubes cực nét ({mc_res}x{mc_res} Voxels)…", 50)
+            self._progress(f"⚙️ Tái tạo lưới Marching Cubes ({mc_res}x{mc_res} Voxels)…", 45)
             meshes = model.extract_mesh(
                 scene_codes,
                 has_vertex_color=(not do_bake),
                 resolution=mc_res,
             )
 
-            # Gentle Laplacian smoothing: preserves sharp edges, eliminates stair-stepping
+            # Taubin non-shrinking smoothing: smooths out stepped polygons while preserving volume & sharp contours!
             if smooth:
-                self._progress("✨ Làm mịn bề mặt hình học (Laplacian filter)…", 62)
+                self._progress("✨ Làm mịn bề mặt Taubin (khử bậc thang, giữ nguyên thể tích)…", 55)
                 try:
-                    trimesh.smoothing.filter_laplacian(meshes[0], lamb=0.08, iterations=2)
-                except Exception as e:
-                    logging.warning(f"Smooth skipped: {e}")
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=10)
+                except Exception:
+                    try:
+                        trimesh.smoothing.filter_laplacian(meshes[0], lamb=0.08, iterations=2)
+                    except Exception as e:
+                        logging.warning(f"Smooth skipped: {e}")
 
             out_obj = os.path.join(item_dir, "model.obj")
             out_glb = os.path.join(item_dir, "model.glb")
             out_tex = os.path.join(item_dir, "texture.png")
 
             if do_bake and HARDWARE_INFO["has_gpu"]:
-                self._progress("🎨 Đang nướng UV Atlas Texture PBR 512px…", 72)
+                self._progress("🎨 Đang nướng UV Atlas Texture PBR 1024px…", 65)
                 from tsr.bake_texture import bake_texture as _bake
                 import xatlas
 
                 # Bake in canonical coordinates to guarantee 100% texture alignment
-                bake = _bake(meshes[0], model, scene_codes[0], 512)
+                bake = _bake(meshes[0], model, scene_codes[0], 1024)
 
                 # Center pivot for Unity & Blender export AFTER baking
                 centroid = meshes[0].bounding_box.centroid.copy()
@@ -328,14 +372,13 @@ class AppApi:
                 tex.save(out_tex)
                 loaded = trimesh.load(out_obj)
                 mat = trimesh.visual.material.PBRMaterial(
-                    baseColorTexture=tex, roughnessFactor=0.35, metallicFactor=0.04
+                    baseColorTexture=tex, roughnessFactor=0.30, metallicFactor=0.05
                 )
                 loaded.visual.material = mat
                 loaded.export(out_glb)
-                engine_label = "RTX 3050 + Nướng UV Texture PBR 512px (Đã căn chuẩn 100%)"
+                engine_label = "RTX 3050 Offline (Đỉnh cao PBR 1024px + Làm mịn Taubin)"
             else:
-                # Fast & Ultra HD vertex colors mode:
-                # Enhance vertex color vibrance & contrast so it matches reference image 100%
+                # Fast vertex colors mode:
                 try:
                     if hasattr(meshes[0].visual, 'vertex_colors') and meshes[0].visual.vertex_colors is not None:
                         vc = meshes[0].visual.vertex_colors.astype(np.float32)
@@ -349,7 +392,6 @@ class AppApi:
                 except Exception as e:
                     logging.warning(f"Vertex color boost skipped: {e}")
 
-                # Auto-center pivot and orient normals
                 try:
                     meshes[0].vertices -= meshes[0].bounding_box.centroid
                     meshes[0].fix_normals()
@@ -360,7 +402,7 @@ class AppApi:
                 meshes[0].export(out_glb)
                 meshes[0].export(out_obj)
                 res_title = "Ultra HD 320" if mc_res == 320 else "Siêu tốc 256"
-                engine_label = f"RTX 3050 Offline ({res_title} – Độ nét tối đa 100%)"
+                engine_label = f"RTX 3050 Offline ({res_title})"
 
             self.last_glb = out_glb
             self.last_obj = out_obj
@@ -383,13 +425,150 @@ class AppApi:
             logging.exception("_gen_local error")
             return {"success": False, "error": str(e)}
 
-    # ── ENGINE 2: TRIPO3D STUDIO PRO ─────────────────────────────────────────
+    # ── ENGINE 2: MESHY AI PRO (200 CREDITS FREE MỖI THÁNG – CHUẨN GAME AAA) ─
+    def _gen_meshy(self, prompt=None, file_path=None):
+        meshy_key = self.config.get("meshy_api_key", "").strip()
+        if not meshy_key:
+            return {
+                "success": False,
+                "error": (
+                    "🔑 Chưa có Meshy AI API Key!\n\n"
+                    "💡 CÁCH LẤY 200 CREDITS MIỄN PHÍ MỖI THÁNG:\n"
+                    "1. Mở trang https://meshy.ai đăng ký tài khoản (miễn phí 100%)\n"
+                    "2. Nhấn vào Avatar góc trên -> API Keys -> Copy Key (dạng 'msy_...')\n"
+                    "3. Bấm nút '⚙️ Cài đặt' ở góc trên AI 3D Studio để dán key!\n\n"
+                    "👉 Hoặc dùng tab '⚡ GPU RTX 3050' để tạo 100% Offline trên máy bạn!"
+                )
+            }
+
+        try:
+            ts = int(time.time())
+            item_dir = os.path.join(OUTPUT_DIR, f"meshy_{ts}")
+            os.makedirs(item_dir, exist_ok=True)
+            local_glb = os.path.join(item_dir, "model.glb")
+            local_obj = os.path.join(item_dir, "model.obj")
+
+            headers = {
+                "Authorization": f"Bearer {meshy_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "AI-3D-Studio/1.7.0"
+            }
+
+            if prompt:
+                # Text to 3D mode
+                self._progress(f"🚀 [Meshy AI] Khởi tạo tạo 3D từ văn bản: '{prompt}'…", 10)
+                prompt_en = translate_to_en(prompt)
+                task_payload = json.dumps({
+                    "mode": "preview",
+                    "prompt": f"{prompt_en}, 3d game asset, highly detailed, realistic, 8k",
+                    "art_style": "realistic"
+                }).encode("utf-8")
+                api_url = "https://api.meshy.ai/v2/text-to-3d"
+            else:
+                # Image to 3D mode
+                self._progress("🚀 [Meshy AI] Đang tải ảnh lên máy chủ Meshy Studio AAA…", 10)
+                with open(file_path, "rb") as f:
+                    b64_img = base64.b64encode(f.read()).decode()
+                ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+                mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
+                data_uri = f"data:image/{mime};base64,{b64_img}"
+
+                task_payload = json.dumps({
+                    "image_url": data_uri,
+                    "enable_pbr": True
+                }).encode("utf-8")
+                api_url = "https://api.meshy.ai/v2/image-to-3d"
+
+            req = urllib.request.Request(api_url, data=task_payload, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                res = json.loads(r.read().decode("utf-8"))
+                task_id = res.get("result")
+                if not task_id:
+                    return {"success": False, "error": f"Meshy API không trả về task ID: {res}"}
+
+            poll_url = f"{api_url}/{task_id}"
+            poll_req = urllib.request.Request(poll_url, headers=headers)
+
+            glb_url = None
+            obj_url = None
+            for i in range(120):
+                time.sleep(3)
+                with urllib.request.urlopen(poll_req, timeout=15) as r_poll:
+                    poll_data = json.loads(r_poll.read().decode("utf-8"))
+                    status = poll_data.get("status")
+                    progress = poll_data.get("progress", 0)
+
+                    if status == "IN_PROGRESS":
+                        prog_val = 15 + int(progress * 0.75)
+                        self._progress(f"✨ [Meshy AI] Đang tái tạo lưới Quad-mesh & vân PBR ({progress}%)…", prog_val)
+                    elif status == "SUCCEEDED":
+                        urls = poll_data.get("model_urls", {})
+                        glb_url = urls.get("glb")
+                        obj_url = urls.get("obj")
+                        break
+                    elif status == "FAILED":
+                        err_msg = poll_data.get("task_error", {}).get("message", "Thất bại")
+                        return {"success": False, "error": f"Meshy AI báo lỗi: {err_msg}"}
+
+            if not glb_url:
+                return {"success": False, "error": "Quá thời gian phản hồi từ Meshy AI (hơn 5 phút)."}
+
+            self._progress("📥 [Meshy AI] Đang tải mô hình PBR chất lượng cao…", 92)
+            req_dl = urllib.request.Request(glb_url, headers={"User-Agent": "AI-3D-Studio"})
+            with urllib.request.urlopen(req_dl, timeout=60) as r_dl, open(local_glb, "wb") as f_out:
+                shutil.copyfileobj(r_dl, f_out)
+
+            if obj_url:
+                try:
+                    req_obj = urllib.request.Request(obj_url, headers={"User-Agent": "AI-3D-Studio"})
+                    with urllib.request.urlopen(req_obj, timeout=60) as r_obj, open(local_obj, "wb") as f_out_obj:
+                        shutil.copyfileobj(r_obj, f_out_obj)
+                except Exception:
+                    pass
+
+            if not os.path.exists(local_obj):
+                try:
+                    m = trimesh.load(local_glb)
+                    m.export(local_obj)
+                except Exception:
+                    pass
+
+            self.last_glb = local_glb
+            self.last_obj = local_obj if os.path.exists(local_obj) else local_glb
+            self.last_folder = item_dir
+
+            self._progress("✅ Hoàn tất! Đang nạp mô hình Meshy Studio PBR…", 98)
+            with open(local_glb, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": local_glb,
+                "obj_path": self.last_obj,
+                "folder": item_dir,
+                "engine_used": "Meshy AI Pro (Chất lượng Game AAA PBR Chuẩn)"
+            }
+
+        except urllib.error.HTTPError as he:
+            body = he.read().decode("utf-8", errors="ignore")
+            if "invalid" in body.lower() or he.code == 401:
+                return {
+                    "success": False,
+                    "error": "⚠️ Meshy API Key không đúng hoặc chưa kích hoạt.\n👉 Vui lòng vào https://meshy.ai -> API Keys để tạo key mới và dán vào '⚙️ Cài đặt'!"
+                }
+            return {"success": False, "error": f"Lỗi Meshy AI ({he.code}): {body}"}
+        except Exception as e:
+            logging.exception("_gen_meshy error")
+            return {"success": False, "error": str(e)}
+
+    # ── ENGINE 3: TRIPO3D STUDIO PRO ─────────────────────────────────────────
     def _gen_tripo3d(self, file_path):
         tripo_key = self.config.get("tripo_api_key", "").strip()
         if not tripo_key:
             return {
                 "success": False,
-                "error": "Chưa có Tripo3D API Key!\n👉 Vui lòng nhấn '⚙️ Cài đặt' ở góc trên để dán API Key.\n(Hoặc dùng chế độ '⚡ GPU RTX 3050' Miễn Phí 100% vĩnh viễn trên máy bạn!)"
+                "error": "Chưa có Tripo3D API Key!\n👉 Vui lòng nhấn '⚙️ Cài đặt' để dán API Key.\n(Hoặc dùng chế độ '⚡ GPU RTX 3050' Miễn Phí 100% vĩnh viễn trên máy bạn!)"
             }
 
         try:
@@ -506,11 +685,12 @@ class AppApi:
                     "success": False,
                     "error": (
                         "⚠️ Tripo3D thông báo: Tài khoản của bạn có 0 credit trên cổng Developer API.\n\n"
-                        "💡 GIẢI THÍCH:\n"
-                        "Tripo3D cho tạo miễn phí trên giao diện Web (tripo3d.ai), nhưng cổng kết nối API thì họ bắt buộc phải mua gói trả phí ($10-$30/tháng).\n\n"
-                        "👉 2 CÁCH DÙNG MIỄN PHÍ 100% NGON NHẤT CHO BẠN:\n"
-                        "1. Chọn tab '⚡ GPU RTX 3050 (Offline)': Chạy 100% trên card máy, KHÔNG CẦN MẠNG, MIỄN PHÍ VĨNH VIỄN!\n"
-                        "2. Truy cập web tripo3d.ai nhận 300 credit miễn phí để tạo 3D, tải file .glb về và bấm '📂 Nạp 3D ngoài' để mở!"
+                        "💡 LÝ DO:\n"
+                        "Tripo3D cho tạo miễn phí trên web tripo3d.ai, nhưng cổng kết nối API thì họ bắt buộc phải mua gói trả phí ($10-$30/tháng).\n\n"
+                        "👉 3 CÁCH SỬ DỤNG TỐT NHẤT CHO BẠN:\n"
+                        "1. Dùng thẻ '💎 Meshy AI': Meshy tặng 200 credits miễn phí mỗi tháng dùng trực tiếp trong ứng dụng!\n"
+                        "2. Truy cập web tripo3d.ai dùng 300 credit miễn phí, tải file .glb về và bấm '📂 Nạp 3D ngoài'!\n"
+                        "3. Dùng thẻ '⚡ GPU RTX 3050': Chạy 100% trên máy tính của bạn, KHÔNG CẦN MẠNG, MIỄN PHÍ VĨNH VIỄN!"
                     )
                 }
             return {"success": False, "error": f"Lỗi Tripo3D ({he.code}): {body}"}
@@ -518,8 +698,8 @@ class AppApi:
             logging.exception("_gen_tripo3d error")
             return {"success": False, "error": str(e)}
 
-    # ── ENGINE 3: CLOUD MULTI-VIEW (HUGGING FACE ZEROGPU) ────────────────────
-    def _gen_cloud(self, file_path, quality="ultra"):
+    # ── ENGINE 4: CLOUD MULTI-VIEW (HUGGING FACE ZEROGPU) ────────────────────
+    def _gen_cloud(self, file_path, quality="pbr_1024"):
         try:
             from gradio_client import Client, handle_file
         except ImportError:
@@ -533,7 +713,7 @@ class AppApi:
             self._progress("🖼 Đang tải ảnh lên Cloud và tách nền…", 15)
             prep = client.predict(input_image=handle_file(file_path), api_name="/preprocess")
 
-            steps = 50 if quality in ("ultra", "hq") else 30
+            steps = 50 if quality in ("pbr_1024", "ultra_320") else 30
             self._progress(f"🔮 Tái tạo đa góc nhìn chi tiết ({steps} bước)…", 35)
             client.predict(input_image=handle_file(prep), sample_steps=steps,
                            sample_seed=42, api_name="/generate_mvs")
@@ -563,22 +743,24 @@ class AppApi:
                 "glb_path": local_glb,
                 "obj_path": local_obj,
                 "folder": item_dir,
-                "engine_used": f"Cloud Multi-View ({steps} Steps HQ)",
+                "engine_used": f"Cloud Multi-View ({steps} Steps)",
             }
         except Exception as e:
             logging.exception("_gen_cloud error")
             msg = str(e)
             if "quota" in msg.lower() or "ZeroGPU" in msg or "429" in msg or "timed out" in msg.lower():
                 msg = ("⚠️ Máy chủ Cloud miễn phí quá tải hoặc hết Quota dùng chung.\n\n"
-                       "👉 GIẢI PHÁP TỐT NHẤT: Chuyển sang thẻ '⚡ GPU RTX 3050' để tạo ngay trên máy tính của bạn 100% offline, miễn phí vĩnh viễn!")
+                       "👉 GIẢI PHÁP TỐT NHẤT: Chuyển sang thẻ '⚡ GPU RTX 3050' để tạo ngay trên máy bạn 100% offline, miễn phí vĩnh viễn!")
             return {"success": False, "error": msg}
 
     # ── settings ─────────────────────────────────────────────────────────────
-    def save_settings(self, hf_token=None, tripo_api_key=None):
+    def save_settings(self, hf_token=None, tripo_api_key=None, meshy_api_key=None):
         if hf_token is not None:
             self.config["hf_token"] = hf_token.strip()
         if tripo_api_key is not None:
             self.config["tripo_api_key"] = tripo_api_key.strip()
+        if meshy_api_key is not None:
+            self.config["meshy_api_key"] = meshy_api_key.strip()
         save_config(self.config)
         return {"success": True}
 
@@ -768,7 +950,7 @@ HTML = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>AI 3D Studio – RTX 3050 Offline</title>
+<title>AI 3D Studio – RTX 3050 & Meshy AAA</title>
 <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
@@ -790,61 +972,69 @@ header{height:52px;background:#131722;border-bottom:1px solid #232936;display:fl
 .layout{flex:1;display:flex;min-height:0}
 
 /* ── Sidebar ── */
-.sidebar{width:380px;background:#0e1017;border-right:1px solid #1e2433;padding:14px;display:flex;flex-direction:column;gap:11px;overflow-y:auto;flex-shrink:0}
+.sidebar{width:380px;background:#0e1017;border-right:1px solid #1e2433;padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex-shrink:0}
 
 /* ── Creation Source Switcher (Image vs Text) ── */
 .src-switcher{display:flex;background:#131825;padding:3px;border-radius:9px;border:1px solid #242d40;gap:4px}
 .src-tab{flex:1;padding:8px;border:none;border-radius:7px;background:transparent;color:#94a3b8;font-size:11.5px;font-weight:700;cursor:pointer;transition:.18s;display:flex;align-items:center;justify-content:center;gap:5px}
 .src-tab.active{background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.4)}
 
-/* ── Engine tabs ── */
-.tabs{display:flex;background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
-.tab{flex:1;padding:6px 2px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
+/* ── 4 Engine tabs ── */
+.tabs{display:grid;grid-template-columns:repeat(2, 1fr);background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
+.tab{padding:6px 4px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
 .tab.on{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.35)}
-.tab.cloud.on{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 2px 8px rgba(16,185,129,.35)}
+.tab.meshy.on{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;box-shadow:0 2px 8px rgba(219,39,119,.4)}
 .tab.tripo.on{background:linear-gradient(135deg,#e11d48,#7c3aed);box-shadow:0 2px 10px rgba(225,29,72,.4)}
+.tab.cloud.on{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 2px 8px rgba(16,185,129,.35)}
 
 /* ── Drop zone ── */
-.drop{border:2px dashed #2d3748;border-radius:10px;padding:12px;text-align:center;cursor:pointer;background:#111622;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:.2s}
+.drop{border:2px dashed #2d3748;border-radius:10px;padding:12px;text-align:center;cursor:pointer;background:#111622;min-height:130px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:.2s}
 .drop:hover{border-color:#3b82f6;background:#161f30}
-.drop img{max-width:100%;max-height:130px;object-fit:contain;border-radius:7px;display:none}
+.drop img{max-width:100%;max-height:120px;object-fit:contain;border-radius:7px;display:none}
 .drop-hint b{color:#60a5fa;display:block;font-size:13px;margin-bottom:2px}
 .drop-hint p{color:#64748b;font-size:11px}
 
 /* ── Text Input Box ── */
-.text-box{display:flex;flex-direction:column;gap:8px}
-.txt-prompt{width:100%;background:#111622;border:1px solid #2d3748;color:#f1f5f9;padding:10px;border-radius:8px;font-size:12.5px;resize:none;height:70px;outline:none;line-height:1.4}
+.text-box{display:flex;flex-direction:column;gap:7px}
+.txt-prompt{width:100%;background:#111622;border:1px solid #2d3748;color:#f1f5f9;padding:9px;border-radius:8px;font-size:12px;resize:none;height:65px;outline:none;line-height:1.4}
 .txt-prompt:focus{border-color:#3b82f6}
-.tags-wrap{display:flex;flex-wrap:wrap;gap:5px}
-.tag-btn{background:#151c2c;border:1px solid #27344d;color:#93c5fd;font-size:10.5px;padding:4px 8px;border-radius:6px;cursor:pointer;transition:.15s}
+.tags-wrap{display:flex;flex-wrap:wrap;gap:4px}
+.tag-btn{background:#151c2c;border:1px solid #27344d;color:#93c5fd;font-size:10px;padding:4px 7px;border-radius:6px;cursor:pointer;transition:.15s}
 .tag-btn:hover{background:#1e293b;border-color:#38bdf8;color:#fff}
 
+/* Concept preview box */
+.concept-preview{display:none;background:#131825;border:1px solid #25334d;border-radius:8px;padding:8px;align-items:center;gap:8px}
+.concept-preview img{width:60px;height:60px;object-fit:contain;border-radius:6px;background:#0b0d14}
+.concept-info{font-size:11px;color:#cbd5e1;line-height:1.4}
+.concept-info b{color:#38bdf8}
+
 /* ── Info card ── */
-.info-card{background:#111622;border:1px solid #1e2433;border-radius:8px;padding:9px 11px;font-size:11px;display:flex;flex-direction:column;gap:3px}
-.ic-title{color:#f1f5f9;font-weight:600;font-size:12px}
+.info-card{background:#111622;border:1px solid #1e2433;border-radius:8px;padding:8px 11px;font-size:11px;display:flex;flex-direction:column;gap:2px}
+.ic-title{color:#f1f5f9;font-weight:600;font-size:11.5px}
 .ic-desc{color:#38bdf8;line-height:1.4}
 .ic-desc b{color:#34d399}
 
 /* ── Settings group ── */
-.sg{display:flex;flex-direction:column;gap:4px}
+.sg{display:flex;flex-direction:column;gap:3px}
 .sg label{font-size:11px;font-weight:600;color:#94a3b8}
-select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f0;padding:7px 10px;border-radius:7px;font-size:12px;outline:none;width:100%}
+select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f0;padding:6px 9px;border-radius:7px;font-size:11.5px;outline:none;width:100%}
 .chk-row{display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer}
 .chk-row input{cursor:pointer}
 
 /* ── Generate button ── */
-.btn-gen{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;border:none;padding:13px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 4px 14px rgba(37,99,235,.3);transition:.2s}
-.btn-gen.cloud-mode{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 4px 14px rgba(16,185,129,.3)}
+.btn-gen{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;border:none;padding:12px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 4px 14px rgba(37,99,235,.3);transition:.2s}
+.btn-gen.meshy-mode{background:linear-gradient(135deg,#7c3aed,#db2777);box-shadow:0 4px 14px rgba(219,39,119,.35)}
 .btn-gen.tripo-mode{background:linear-gradient(135deg,#e11d48,#7c3aed);box-shadow:0 4px 14px rgba(225,29,72,.35)}
+.btn-gen.cloud-mode{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 4px 14px rgba(16,185,129,.3)}
 .btn-gen:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 18px rgba(37,99,235,.4)}
 .btn-gen:disabled{background:#1a2030;color:#475569;cursor:not-allowed;box-shadow:none;transform:none}
 
 /* ── Progress block ── */
-.prog-block{background:#111622;border:1px solid #1e2433;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-height:56px}
-.prog-text{font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:7px;min-height:20px}
+.prog-block{background:#111622;border:1px solid #1e2433;border-radius:8px;padding:9px 11px;display:flex;flex-direction:column;gap:5px;min-height:52px}
+.prog-text{font-size:11.5px;color:#94a3b8;display:flex;align-items:center;gap:7px;min-height:18px}
 .prog-bar-wrap{height:4px;background:#1e2433;border-radius:2px;overflow:hidden;display:none}
 .prog-bar{height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#10b981);border-radius:2px;transition:width .3s ease}
-.spin{width:13px;height:13px;border:2px solid #2d3748;border-top-color:#38bdf8;border-radius:50%;animation:sp .7s linear infinite;display:none;flex-shrink:0}
+.spin{width:12px;height:12px;border:2px solid #2d3748;border-top-color:#38bdf8;border-radius:50%;animation:sp .7s linear infinite;display:none;flex-shrink:0}
 @keyframes sp{to{transform:rotate(360deg)}}
 
 /* ── Main Stage (Toolbar + 3D Viewport) ── */
@@ -856,12 +1046,12 @@ select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f
 .tool-label{font-size:11px;font-weight:600;color:#94a3b8;display:flex;align-items:center;gap:4px;margin-right:2px}
 
 /* Lighting Preset Buttons */
-.light-btn{background:#131825;border:1px solid #253147;color:#94a3b8;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:4px}
+.light-btn{background:#131825;border:1px solid #253147;color:#94a3b8;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:4px}
 .light-btn:hover{background:#1c263c;color:#f1f5f9;border-color:#38bdf8}
 .light-btn.active{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border-color:#60a5fa;box-shadow:0 0 10px rgba(59,130,246,.3)}
 
 /* Action Buttons */
-.btn-act{background:#151c2a;border:1px solid #2d3748;color:#94a3b8;padding:6px 12px;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all .18s;display:flex;align-items:center;gap:5px}
+.btn-act{background:#151c2a;border:1px solid #2d3748;color:#94a3b8;padding:6px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;transition:all .18s;display:flex;align-items:center;gap:5px}
 .btn-act:hover{background:#1e2a3e;border-color:#38bdf8;color:#f1f5f9;transform:translateY(-1px)}
 .btn-act.ready{background:linear-gradient(135deg,#132847,#1a263c);border-color:#38bdf8;color:#38bdf8;box-shadow:0 0 10px rgba(56,189,248,.25)}
 .btn-act.ready:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#60a5fa}
@@ -876,7 +1066,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
 /* ── Modal ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:99}
-.modal{background:#111622;border:1px solid #2d3748;border-radius:12px;width:520px;max-width:92vw;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 40px rgba(0,0,0,.5)}
+.modal{background:#111622;border:1px solid #2d3748;border-radius:12px;width:540px;max-width:92vw;padding:22px;display:flex;flex-direction:column;gap:13px;box-shadow:0 20px 40px rgba(0,0,0,.5)}
 .m-hdr{display:flex;justify-content:space-between;align-items:center}
 .m-title{font-size:15px;font-weight:700;color:#60a5fa}
 .m-x{background:none;border:none;color:#64748b;font-size:18px;cursor:pointer}
@@ -895,11 +1085,11 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.6.0</span>
+    <span class="ver" id="ver">v1.7.0</span>
   </div>
   <div class="hdr-right">
-    <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang phát hiện GPU…</span></div>
-    <button class="btn-hdr" onclick="openSettings()">⚙️ Cài đặt</button>
+    <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
+    <button class="btn-hdr" onclick="openSettings()">⚙️ Cài đặt &amp; API Key</button>
     <button class="btn-hdr" onclick="openUpdate()">🔄 Cập nhật</button>
   </div>
 </header>
@@ -909,20 +1099,21 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <!-- Source Switcher: Image or Text -->
     <div class="src-switcher">
       <button class="src-tab active" id="srcTabImg" onclick="switchSource('image')">🖼️ Từ Hình Ảnh</button>
-      <button class="src-tab" id="srcTabTxt" onclick="switchSource('text')">✍️ Từ Văn Bản (Mới)</button>
+      <button class="src-tab" id="srcTabTxt" onclick="switchSource('text')">✍️ Từ Văn Bản</button>
     </div>
 
-    <!-- Engine tabs (3 Engines) -->
+    <!-- 4 Engine tabs -->
     <div class="tabs">
-      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ GPU RTX 3050 (Offline)</button>
-      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">🌐 Hybrid Cloud</button>
+      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ RTX 3050 (Offline)</button>
+      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')">💎 Meshy AI (Game AAA)</button>
       <button class="tab tripo" id="tabTripo" onclick="setMode('tripo')">🚀 Tripo3D Studio</button>
+      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">🌐 Hybrid Cloud</button>
     </div>
 
     <!-- Not-ready banner -->
     <div class="banner" id="banner">
       <span>⏳</span>
-      <span id="bannerTxt">Model AI đang nạp vào GPU RTX 3050 (~3 giây). Sẵn sàng!</span>
+      <span id="bannerTxt">Model AI đang nạp vào GPU RTX 3050 (~vài giây). Sẵn sàng!</span>
     </div>
 
     <!-- 1. IMAGE MODE CONTAINER -->
@@ -931,14 +1122,14 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <img id="prev" alt="preview">
         <div class="drop-hint" id="dropHint">
           <b>Chọn ảnh 2D từ máy tính</b>
-          <p>Nhấn để chọn ảnh PNG / JPG / WebP</p>
+          <p>Nhấn để nạp ảnh PNG / JPG / WebP</p>
         </div>
       </div>
     </div>
 
     <!-- 2. TEXT MODE CONTAINER -->
     <div id="textBox" style="display:none" class="text-box">
-      <textarea id="promptInput" class="txt-prompt" placeholder="Nhập mô tả 3D bằng tiếng Việt hoặc tiếng Anh (ví dụ: Quả chuối vàng chín mọng, Ghế gaming hiện đại, Siêu xe Lamborghini, Thanh kiếm thần thoại…)"></textarea>
+      <textarea id="promptInput" class="txt-prompt" placeholder="Nhập mô tả bằng tiếng Việt hoặc tiếng Anh (ví dụ: Quả chuối vàng chín mọng, Ghế sofa bọc da sang trọng, Siêu xe Lamborghini, Thanh kiếm hiệp sĩ…)"></textarea>
       <div class="tags-wrap">
         <button class="tag-btn" onclick="setPrompt('Quả chuối vàng chín mọng')">🍌 Chuối vàng</button>
         <button class="tag-btn" onclick="setPrompt('Chiếc ghế sofa bọc da sang trọng')">🛋️ Ghế sofa</button>
@@ -946,33 +1137,60 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <button class="tag-btn" onclick="setPrompt('Thanh kiếm hiệp sĩ bằng thép sáng loáng')">⚔️ Kiếm hiệp sĩ</button>
         <button class="tag-btn" onclick="setPrompt('Bình hoa gốm sứ cổ điển xanh trắng')">🏺 Bình gốm</button>
       </div>
+      <!-- Concept preview when generated -->
+      <div class="concept-preview" id="conceptBox">
+        <img id="conceptImg" alt="concept">
+        <div class="concept-info">
+          <b>Ý tưởng 2D AI đã phác họa</b><br>
+          <span id="conceptTxt" style="font-size:10px;color:#94a3b8">Đang chuyển vào nhân GPU 3D...</span>
+        </div>
+      </div>
     </div>
 
     <!-- Info card -->
     <div class="info-card">
       <span class="ic-title" id="icTitle">⚡ GPU Cục bộ – NVIDIA RTX 3050 (100% Offline)</span>
-      <span class="ic-desc" id="icDesc">Chạy 100% trên card máy, <b>không cần mạng, không hết lượt</b>, chuẩn hình mẫu 100%.</span>
+      <span class="ic-desc" id="icDesc">Chạy 100% trên card máy, <b>không cần mạng, không hết lượt</b>, nướng vân UV 1024px mịn màng.</span>
     </div>
 
     <!-- Local settings -->
     <div id="localSet">
-      <div class="sg" style="margin-bottom:8px">
-        <label>Chất lượng hình học &amp; Chi tiết RTX 3050:</label>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Chất lượng hình học &amp; Bề mặt RTX 3050:</label>
         <select id="quality">
-          <option value="ultra" selected>💎 Cực đại Ultra HD 320 (~10s) – Góc cạnh sắc nét, chuẩn 100% (Khuyên dùng)</option>
-          <option value="fast">⚡ Siêu tốc 256 (~3s) – Nhanh như chớp, màu sắc rực rỡ</option>
-          <option value="bake">🎨 Nướng UV Texture PBR 512px (~40s) – Chuẩn vật liệu Unity / Blender</option>
+          <option value="pbr_1024" selected>💎 Đỉnh cao PBR 1024px + Làm mịn Taubin (~20s) – Mịn màng, vân nét (Khuyên dùng)</option>
+          <option value="ultra_320">📐 Chi tiết góc cạnh Ultra HD 320 (~10s) – 43.000 điểm lưới</option>
+          <option value="fast_256">⚡ Siêu tốc Vertex Colors 256 (~3s) – Màu sắc rực rỡ</option>
         </select>
       </div>
       <div class="chk-row" style="margin-bottom:6px">
         <input type="checkbox" id="chkSmooth" checked>
-        <label class="chk-row" for="chkSmooth">✨ Làm mịn Laplacian (khử bậc thang, giữ góc cạnh)</label>
+        <label class="chk-row" for="chkSmooth">✨ Làm mịn Taubin (giữ nguyên khối lượng, khử phẳng sọc)</label>
       </div>
-      <p style="font-size:10.5px;color:#94a3b8;line-height:1.4">
-        ✓ <b>Màu sắc rực rỡ:</b> Đã cân chỉnh Saturation &amp; Contrast khớp màu hình mẫu 100%.<br>
-        ✓ <b>Độ nét góc cạnh:</b> Marching Cubes 320 Voxels tái hiện chi tiết siêu mượt.<br>
-        ✓ Tự động căn tâm trục (0, 0, 0) chuẩn Game Engine.
-      </p>
+    </div>
+
+    <!-- Meshy settings -->
+    <div id="meshySet" style="display:none">
+      <div style="background:rgba(124,58,237,.15);border:1px solid rgba(124,58,237,.35);border-radius:8px;padding:8px 10px;font-size:11px;color:#f472b6;line-height:1.4;margin-bottom:6px">
+        💎 <b>Chất lượng Game AAA Siêu Thực (Meshy AI):</b><br>
+        Tạo mô hình PBR đa lớp (Albedo, Normal, Roughness, Metallic) đẹp xuất sắc.
+      </div>
+      <div style="background:#131824;border:1px solid #1e2536;border-radius:8px;padding:8px 10px;font-size:10.5px;color:#cbd5e1;line-height:1.5">
+        🎁 <b>TẶNG 200 CREDITS MIỄN PHÍ MỖI THÁNG:</b><br>
+        1. Nhấn <a href="javascript:void(0)" onclick="openMeshyWeb()" style="color:#60a5fa;font-weight:700;text-decoration:underline">Mở trang meshy.ai</a> đăng ký miễn phí.<br>
+        2. Vào <b>Settings -> API Keys</b> tạo key (msy_...).<br>
+        3. Vào <b>⚙️ Cài đặt</b> dán key để tạo mô hình AAA trực tiếp!
+      </div>
+    </div>
+
+    <!-- Tripo3D settings -->
+    <div id="tripoSet" style="display:none">
+      <div style="background:#131824;border:1px solid #1e2536;border-radius:8px;padding:8px 10px;font-size:10.5px;color:#cbd5e1;line-height:1.5">
+        💡 <b>Tripo3D Web (300 Credits Miễn Phí):</b><br>
+        1. Nhấn <a href="javascript:void(0)" onclick="openTripoWeb()" style="color:#60a5fa;font-weight:700;text-decoration:underline">Mở platform.tripo3d.ai</a> tạo 3D.<br>
+        2. Tải file <b>.glb</b> về máy tính.<br>
+        3. Nhấn <b>'📂 Nạp 3D ngoài'</b> trên thanh công cụ để mở và xuất sang Blender/Unity!
+      </div>
     </div>
 
     <!-- Cloud settings -->
@@ -980,29 +1198,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <div class="sg" style="margin-bottom:7px">
         <label>Chất lượng Cloud Multi-View</label>
         <select id="cloudQ">
-          <option value="ultra" selected>🌟 Tái tạo cao cấp (50 bước – Chi tiết đa góc)</option>
-          <option value="fast">⚡ Tiết kiệm Quota (30 bước)</option>
+          <option value="pbr_1024" selected>🌟 Tái tạo cao cấp (50 bước – Chi tiết đa góc)</option>
+          <option value="fast_256">⚡ Tiết kiệm Quota (30 bước)</option>
         </select>
-      </div>
-      <p style="font-size:10px;color:#475569;line-height:1.4">
-        Tái tạo 6 góc nhìn đa chiều qua Hugging Face ZeroGPU.
-      </p>
-    </div>
-
-    <!-- Tripo3D settings -->
-    <div id="tripoSet" style="display:none">
-      <div style="background:rgba(225,29,72,.12);border:1px solid rgba(225,29,72,.3);border-radius:8px;padding:9px 11px;font-size:11px;color:#fda4af;line-height:1.4;margin-bottom:7px">
-        💎 <b>Chất lượng Studio AAA (Tripo3D):</b><br>
-        Vân PBR phản xạ ánh sáng chân thực, lưới Quad-mesh chuyên nghiệp chuẩn Game &amp; 3D Production.
-      </div>
-      <div style="background:#131824;border:1px solid #1e2536;border-radius:8px;padding:9px 11px;font-size:10.5px;color:#cbd5e1;line-height:1.5;margin-bottom:7px">
-        💡 <b style="color:#38bdf8">CÁCH DÙNG MIỄN PHÍ 100% GẤP 100 LẦN:</b><br>
-        • Cổng API của Tripo3D bắt buộc nạp tiền ($10).<br>
-        • <b>Web tripo3d.ai hoàn toàn MIỄN PHÍ 300 credits!</b><br>
-        👉 <b>3 Bước nhận mô hình Studio miễn phí:</b><br>
-        1. Nhấn <a href="javascript:void(0)" onclick="openTripoWeb()" style="color:#60a5fa;font-weight:700;text-decoration:underline">Mở platform.tripo3d.ai</a> tạo 3D.<br>
-        2. Tải file <b>.glb</b> về máy tính.<br>
-        3. Nhấn <b>'📂 Nạp 3D ngoài'</b> trên thanh công cụ để mở xoay 360°, đổi ánh sáng ACES và xuất sang Unity/Blender!
       </div>
     </div>
 
@@ -1060,7 +1258,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
           <line x1="12" y1="22.08" x2="12" y2="12"/>
         </svg>
         <p style="font-size:14px;font-weight:600;color:#64748b">Mô hình 3D xoay 360° sẽ hiển thị tại đây</p>
-        <p style="font-size:12px;color:#475569">Chọn ảnh hoặc nhập chữ bên trái rồi nhấn Bắt đầu tạo 3D</p>
+        <p style="font-size:12px;color:#475569">Chọn ảnh hoặc nhập văn bản rồi nhấn Bắt đầu tạo 3D</p>
       </div>
 
       <model-viewer id="mv"
@@ -1080,7 +1278,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       </model-viewer>
 
       <div class="hint" id="hint" style="display:none">
-        🖱️ Chuột trái: Xoay 360° &nbsp;|&nbsp; Con lăn: Zoom &nbsp;|&nbsp; Chuột phải: Di chuyển &nbsp;|&nbsp; Bấm Studio ACES để đổi màu ánh sáng
+        🖱️ Chuột trái: Xoay 360° &nbsp;|&nbsp; Con lăn: Zoom &nbsp;|&nbsp; Chuột phải: Di chuyển góc nhìn &nbsp;|&nbsp; Bấm Studio ACES đổi ánh sáng
       </div>
     </div>
   </div>
@@ -1090,21 +1288,27 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <div class="modal-bg" id="mSet">
   <div class="modal">
     <div class="m-hdr">
-      <span class="m-title">⚙️ Cài đặt API</span>
+      <span class="m-title">⚙️ Cài đặt API Key (Miễn phí 100%)</span>
       <button class="m-x" onclick="closeSettings()">&times;</button>
     </div>
 
-    <!-- Tripo3D API Key -->
+    <!-- Meshy API Key (Top recommendation) -->
     <div class="sg">
-      <label>🚀 Tripo3D API Key (Tùy chọn):</label>
-      <input type="text" id="tripoKey" placeholder="tsk_xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
-      <p style="font-size:11px;color:#94a3b8;margin-top:3px;line-height:1.4">
-        (Nếu không có API key, bạn có thể tạo trên web <b>platform.tripo3d.ai</b> rồi tải về nạp vào máy hoàn toàn miễn phí).
+      <label>💎 Meshy AI API Key (Tặng 200 credits miễn phí/tháng – Chất lượng Game AAA):</label>
+      <input type="text" id="meshyKey" placeholder="msy_xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+      <p style="font-size:10.5px;color:#94a3b8;margin-top:2px;line-height:1.4">
+        👉 Đăng ký miễn phí tại <b style="color:#60a5fa">meshy.ai</b> -> Settings -> API Keys để nhận key.
       </p>
     </div>
 
+    <!-- Tripo3D API Key -->
+    <div class="sg" style="margin-top:4px">
+      <label>🚀 Tripo3D API Key (Tùy chọn):</label>
+      <input type="text" id="tripoKey" placeholder="tsk_xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+    </div>
+
     <!-- Hugging Face Token -->
-    <div class="sg" style="margin-top:6px">
+    <div class="sg" style="margin-top:4px">
       <label>☁️ Hugging Face Token (Tùy chọn):</label>
       <input type="text" id="hfTok" placeholder="hf_xxxxxxxxxxxxxxxx" style="font-family:monospace">
     </div>
@@ -1149,6 +1353,12 @@ window._setProgress = function(msg, pct) {
   }
 };
 
+window._showConcept = function(dataUrl) {
+  document.getElementById('conceptImg').src = dataUrl;
+  document.getElementById('conceptBox').style.display = 'flex';
+  document.getElementById('conceptTxt').textContent = 'Đang đưa vào nhân GPU 3D…';
+};
+
 /* ── source switcher (Image vs Text) ── */
 function switchSource(s) {
   curSource = s;
@@ -1157,15 +1367,29 @@ function switchSource(s) {
     document.getElementById('srcTabTxt').classList.remove('active');
     document.getElementById('imageBox').style.display = 'block';
     document.getElementById('textBox').style.display = 'none';
-    document.getElementById('btnGen').textContent = curMode === 'local'
-      ? '⚡ BẮT ĐẦU TẠO 3D (RTX 3050 OFFLINE)'
-      : (curMode === 'cloud' ? '🌐 TẠO 3D HYBRID (CLOUD)' : '🚀 TẠO 3D STUDIO (TRIPO3D)');
   } else {
     document.getElementById('srcTabTxt').classList.add('active');
     document.getElementById('srcTabImg').classList.remove('active');
     document.getElementById('textBox').style.display = 'flex';
     document.getElementById('imageBox').style.display = 'none';
-    document.getElementById('btnGen').textContent = '✍️ BẮT ĐẦU TẠO 3D TỪ VĂN BẢN (RTX 3050)';
+  }
+  updateGenBtnText();
+}
+
+function updateGenBtnText() {
+  const btn = document.getElementById('btnGen');
+  if (curMode === 'local') {
+    btn.className = 'btn-gen';
+    btn.textContent = curSource === 'image' ? '⚡ BẮT ĐẦU TẠO 3D (RTX 3050 OFFLINE)' : '✍️ BẮT ĐẦU TẠO 3D TỪ VĂN BẢN (RTX 3050)';
+  } else if (curMode === 'meshy') {
+    btn.className = 'btn-gen meshy-mode';
+    btn.textContent = curSource === 'image' ? '💎 TẠO 3D GAME AAA (MESHY AI)' : '✍️ TẠO 3D TỪ CHỮ GAME AAA (MESHY AI)';
+  } else if (curMode === 'tripo') {
+    btn.className = 'btn-gen tripo-mode';
+    btn.textContent = '🚀 TẠO 3D STUDIO (TRIPO3D)';
+  } else {
+    btn.className = 'btn-gen cloud-mode';
+    btn.textContent = '🌐 TẠO 3D HYBRID (CLOUD)';
   }
 }
 
@@ -1184,6 +1408,7 @@ window.addEventListener('pywebviewready', async () => {
   if (d.config) {
     if (d.config.hf_token) document.getElementById('hfTok').value = d.config.hf_token;
     if (d.config.tripo_api_key) document.getElementById('tripoKey').value = d.config.tripo_api_key;
+    if (d.config.meshy_api_key) document.getElementById('meshyKey').value = d.config.meshy_api_key;
   }
 
   _modelReady = d.model_ready;
@@ -1216,33 +1441,33 @@ async function pollModel() {
 /* ── mode switcher ── */
 function setMode(m) {
   curMode = m;
-  ['tabLocal','tabCloud','tabTripo'].forEach(id => {
-    document.getElementById(id).className = 'tab' + (id === 'tabCloud' ? ' cloud' : (id === 'tabTripo' ? ' tripo' : ''));
+  ['tabLocal','tabMeshy','tabTripo','tabCloud'].forEach(id => {
+    document.getElementById(id).className = 'tab' + (id === 'tabMeshy' ? ' meshy' : (id === 'tabTripo' ? ' tripo' : (id === 'tabCloud' ? ' cloud' : '')));
   });
-  ['localSet','cloudSet','tripoSet'].forEach(id => document.getElementById(id).style.display = 'none');
+  ['localSet','meshySet','tripoSet','cloudSet'].forEach(id => document.getElementById(id).style.display = 'none');
 
   if (m === 'local') {
     document.getElementById('tabLocal').classList.add('on');
     document.getElementById('localSet').style.display = '';
     document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (100% Offline)';
-    document.getElementById('icDesc').innerHTML = 'Tạo 3D bằng chip AI trên card RTX 3050 máy bạn. <b>Không cần mạng, không bao giờ hết lượt</b>.';
-    document.getElementById('btnGen').className = 'btn-gen';
-    document.getElementById('btnGen').textContent = curSource === 'image' ? '⚡ BẮT ĐẦU TẠO 3D (RTX 3050 OFFLINE)' : '✍️ BẮT ĐẦU TẠO 3D TỪ VĂN BẢN (RTX 3050)';
-  } else if (m === 'cloud') {
-    document.getElementById('tabCloud').classList.add('on');
-    document.getElementById('cloudSet').style.display = '';
-    document.getElementById('icTitle').textContent = '🌐 Chế độ Hybrid AI – Kết hợp Cloud & RTX 3050';
-    document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Cloud miễn phí tái tạo <b>6 góc nhìn đa chiều 360°</b>.';
-    document.getElementById('btnGen').className = 'btn-gen cloud-mode';
-    document.getElementById('btnGen').textContent = '🌐 BẮT ĐẦU TẠO 3D HYBRID (CLOUD)';
-  } else {
+    document.getElementById('icDesc').innerHTML = 'Tạo 3D bằng card RTX 3050 máy bạn. <b>Không cần mạng, không hết lượt</b>, nướng vân UV 1024px mịn màng.';
+  } else if (m === 'meshy') {
+    document.getElementById('tabMeshy').classList.add('on');
+    document.getElementById('meshySet').style.display = '';
+    document.getElementById('icTitle').textContent = '💎 Meshy AI Pro (Chất lượng Game AAA Siêu Thực)';
+    document.getElementById('icDesc').innerHTML = 'Được tặng <b>200 credits miễn phí mỗi tháng</b>. Vân PBR phản chiếu ánh sáng chân thực 100%.';
+  } else if (m === 'tripo') {
     document.getElementById('tabTripo').classList.add('on');
     document.getElementById('tripoSet').style.display = '';
-    document.getElementById('icTitle').textContent = '🚀 Tripo3D Studio (Chất lượng Game AAA Siêu Thực)';
-    document.getElementById('icDesc').innerHTML = 'Mô hình 3D chuẩn Studio thương mại, <b>vân PBR chân thực 100%</b>.';
-    document.getElementById('btnGen').className = 'btn-gen tripo-mode';
-    document.getElementById('btnGen').textContent = '🚀 BẮT ĐẦU TẠO 3D STUDIO (TRIPO3D)';
+    document.getElementById('icTitle').textContent = '🚀 Tripo3D Studio (300 Credits Web)';
+    document.getElementById('icDesc').innerHTML = 'Tạo trên web <b>platform.tripo3d.ai</b> rồi nạp vào bằng nút <b>📂 Nạp 3D ngoài</b>.';
+  } else {
+    document.getElementById('tabCloud').classList.add('on');
+    document.getElementById('cloudSet').style.display = '';
+    document.getElementById('icTitle').textContent = '🌐 Chế độ Hybrid Cloud Multi-View';
+    document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Cloud tái tạo 6 góc nhìn đa chiều 360°.';
   }
+  updateGenBtnText();
 }
 
 /* ── image pick ── */
@@ -1266,7 +1491,6 @@ async function generate() {
     ? document.getElementById('quality').value
     : document.getElementById('cloudQ').value;
   const smooth = document.getElementById('chkSmooth').checked;
-  const bake = (quality === 'bake');
 
   if (curSource === 'image' && !imgPath) {
     window._setProgress('⚠️ Hãy nhấn vào khung chọn ảnh trước!', -1);
@@ -1293,10 +1517,10 @@ async function generate() {
     let r;
     if (curSource === 'text') {
       const prompt = document.getElementById('promptInput').value.trim();
-      r = await window.pywebview.api.generate_from_text(prompt, quality, smooth);
+      r = await window.pywebview.api.generate_from_text(prompt, quality, smooth, curMode);
     } else {
       r = await window.pywebview.api.generate_3d(
-        imgPath, curMode, 'auto', bake, smooth, quality
+        imgPath, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality
       );
     }
 
@@ -1310,6 +1534,9 @@ async function generate() {
       document.getElementById('barWrap').style.display = 'block';
       document.getElementById('bar').style.width = '100%';
       window._setProgress('✅ Thành công! (' + r.engine_used + ') – Sẵn sàng lưu file!', 100);
+      if (r.concept_data) {
+        document.getElementById('conceptTxt').textContent = '✅ Đã hoàn tất mô hình 3D!';
+      }
     } else if (r && r.error) {
       window._setProgress('❌ ' + r.error, -1);
       document.getElementById('bar').style.width = '0%';
@@ -1333,21 +1560,21 @@ function setLighting(mode) {
     mv.setAttribute('exposure', '1.15');
     mv.setAttribute('shadow-intensity', '1.5');
     mv.setAttribute('shadow-softness', '0.5');
-    window._setProgress('💡 Đã chuyển sang chế độ: Studio ACES (Chuẩn thực tế 100%)', -1);
+    window._setProgress('💡 Chế độ ánh sáng: Studio ACES (Chuẩn thực tế 100%)', -1);
   } else if (mode === 'aces') {
     document.getElementById('lbtnCinema').classList.add('active');
     mv.setAttribute('tone-mapping', 'aces');
     mv.setAttribute('exposure', '1.0');
     mv.setAttribute('shadow-intensity', '2.2');
     mv.setAttribute('shadow-softness', '0.3');
-    window._setProgress('💡 Đã chuyển sang chế độ: Điện ảnh Cinema (Đậm nét & Tương phản cao)', -1);
+    window._setProgress('💡 Chế độ ánh sáng: Điện ảnh Cinema (Đậm nét & Tương phản cao)', -1);
   } else {
     document.getElementById('lbtnSoft').classList.add('active');
     mv.setAttribute('tone-mapping', 'neutral');
     mv.setAttribute('exposure', '1.2');
     mv.setAttribute('shadow-intensity', '0.8');
     mv.setAttribute('shadow-softness', '0.8');
-    window._setProgress('💡 Đã chuyển sang chế độ: Tự nhiên Studio (Mềm mại dịu mắt)', -1);
+    window._setProgress('💡 Chế độ ánh sáng: Tự nhiên Studio (Mềm mại dịu mắt)', -1);
   }
 }
 
@@ -1391,13 +1618,18 @@ function openTripoWeb() {
   window.pywebview.api.open_external_url('https://platform.tripo3d.ai');
 }
 
+function openMeshyWeb() {
+  window.pywebview.api.open_external_url('https://meshy.ai');
+}
+
 /* ── settings ── */
 function openSettings() { document.getElementById('mSet').style.display='flex'; }
 function closeSettings() { document.getElementById('mSet').style.display='none'; }
 async function saveSettings() {
   await window.pywebview.api.save_settings(
     document.getElementById('hfTok').value,
-    document.getElementById('tripoKey').value
+    document.getElementById('tripoKey').value,
+    document.getElementById('meshyKey').value
   );
   closeSettings();
   window._setProgress('✅ Đã lưu cài đặt API Key thành công.', -1);
