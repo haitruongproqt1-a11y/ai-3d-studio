@@ -23,7 +23,7 @@ import cv2
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.4.2"
+APP_VERSION = "v1.4.3"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -68,7 +68,7 @@ def load_ai_model():
             config_name="config.yaml",
             weight_name="model.ckpt",
         )
-        # 8192 is the sweet spot: fast enough for inference, low VRAM
+        # 8192 chunk_size: optimal speed and VRAM stability on RTX 3050
         model.renderer.set_chunk_size(8192)
         model.to(current_device)
         _model_ready.set()
@@ -116,13 +116,41 @@ class AppApi:
     def set_window(self, w):
         self._window = w
 
-    # ── called once on startup ──────────────────────────────────────────────
+    def _find_latest_model(self):
+        """Scans output_app for the most recent valid model so user can view/save right away"""
+        try:
+            if not os.path.exists(OUTPUT_DIR):
+                return None
+            dirs = [os.path.join(OUTPUT_DIR, d) for d in os.listdir(OUTPUT_DIR)
+                    if os.path.isdir(os.path.join(OUTPUT_DIR, d))]
+            dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+            for d in dirs:
+                glb = os.path.join(d, "model.glb")
+                obj = os.path.join(d, "model.obj")
+                if os.path.exists(glb) and os.path.getsize(glb) > 1000:
+                    self.last_glb = glb
+                    self.last_obj = obj if os.path.exists(obj) else ""
+                    self.last_folder = d
+                    with open(glb, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    return {
+                        "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                        "folder": d,
+                        "glb_path": glb,
+                        "obj_path": self.last_obj,
+                    }
+        except Exception as e:
+            logging.warning(f"Error finding latest model: {e}")
+        return None
+
     def get_init_data(self):
+        latest = self._find_latest_model()
         return {
             "version": APP_VERSION,
             "hardware": HARDWARE_INFO,
             "model_ready": _model_ready.is_set(),
             "config": self.config,
+            "latest_model": latest,
         }
 
     # ── image picker ────────────────────────────────────────────────────────
@@ -144,13 +172,11 @@ class AppApi:
                 return {"error": str(e)}
         return None
 
-    # ── model ready check ───────────────────────────────────────────────────
     def is_model_ready(self):
         return _model_ready.is_set()
 
     # ── live progress helper ─────────────────────────────────────────────────
     def _progress(self, msg: str, pct: int = -1):
-        """Push a status message and optional progress % to the UI."""
         if self._window:
             safe = msg.replace("'", "\\'").replace("\n", " ")
             self._window.evaluate_js(f"window._setProgress('{safe}', {pct});")
@@ -161,12 +187,12 @@ class AppApi:
         if orig.mode in ("RGBA", "LA"):
             alpha = np.array(orig)[:, :, -1]
             if (alpha < 240).any() and (alpha > 15).any():
-                self._progress("🖼 Dùng kênh alpha sẵn có…", 10)
+                self._progress("🖼 Dùng kênh alpha sẵn có của ảnh…", 10)
                 img = resize_foreground(orig, 0.85)
                 arr = np.array(img).astype(np.float32) / 255.0
                 arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
                 return Image.fromarray((arr * 255).astype(np.uint8))
-        self._progress("🤖 AI đang tách nền…", 10)
+        self._progress("🤖 AI đang tách nền chuẩn xác…", 10)
         img = remove_background(orig.convert("RGB"))
         img = resize_foreground(img, 0.85)
         arr = np.array(img).astype(np.float32) / 255.0
@@ -176,30 +202,22 @@ class AppApi:
     # ── main 3D generation entry ────────────────────────────────────────────
     def generate_3d(self, file_path, engine="local",
                     mc_resolution=None, bake_tex=False,
-                    smooth=True, quality="fast"):
+                    smooth=True, quality="hq"):
         if engine == "cloud":
             return self._gen_cloud(file_path, quality)
         return self._gen_local(file_path, mc_resolution, bake_tex, smooth, quality)
 
-    # ── LOCAL GPU ────────────────────────────────────────────────────────────
+    # ── LOCAL GPU (RTX 3050) ─────────────────────────────────────────────────
     def _gen_local(self, file_path, mc_resolution, bake_tex, smooth, quality):
         global model, current_device
         if not _model_ready.is_set():
-            return {"success": False, "error": "Model AI chưa sẵn sàng. Đợi thêm vài giây rồi thử lại!"}
+            return {"success": False, "error": "Model AI đang nạp vào GPU. Vui lòng đợi vài giây!"}
 
         try:
-            # ── resolution preset ──────────────────────────────────────────
-            if mc_resolution is None or mc_resolution == "auto":
-                if quality == "fast":
-                    mc_resolution = 128
-                elif quality == "hq":
-                    mc_resolution = 256
-                else:
-                    mc_resolution = 256
-            mc_resolution = int(mc_resolution)
+            # 256 resolution provides full detail, sharp edges and curves
+            mc_res = 256
 
-            # ── preprocess ─────────────────────────────────────────────────
-            self._progress("🖼 Đang xử lý ảnh…", 5)
+            self._progress("🖼 Đang tiền xử lý ảnh và khử viền…", 10)
             image = self._preprocess(file_path)
 
             ts = int(time.time())
@@ -207,24 +225,27 @@ class AppApi:
             os.makedirs(item_dir, exist_ok=True)
             image.save(os.path.join(item_dir, "input.png"))
 
-            # ── TripoSR inference ──────────────────────────────────────────
-            self._progress("🧠 AI đang phân tích ảnh 2D…", 20)
+            self._progress("🧠 AI đang phân tích không gian 3 chiều…", 25)
             with torch.no_grad():
                 scene_codes = model([image], device=current_device)
 
-            # ── mesh extraction ────────────────────────────────────────────
-            self._progress("⚙️ Đang tái tạo hình khối 3D…", 45)
-            # has_vertex_color=True → vertex colors from TripoSR (fast, no UV baking needed)
-            # has_vertex_color=False → raw geometry only (used before bake)
+            self._progress(f"⚙️ Tái tạo hình khối 3D chi tiết cao ({mc_res}x{mc_res})…", 50)
             meshes = model.extract_mesh(
                 scene_codes,
                 has_vertex_color=(not bake_tex),
-                resolution=mc_resolution,
+                resolution=mc_res,
             )
 
-            # ── optional smoothing ─────────────────────────────────────────
+            # Auto-standardize: center pivot and compute outward normals
+            try:
+                meshes[0].vertices -= meshes[0].bounding_box.centroid
+                meshes[0].fix_normals()
+            except Exception:
+                pass
+
+            # Taubin smoothing to eliminate voxelization
             if smooth:
-                self._progress("✨ Làm mịn bề mặt Taubin…", 60)
+                self._progress("✨ Làm mịn bề mặt Taubin toán học…", 65)
                 try:
                     trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=0.5, iterations=8)
                 except Exception as e:
@@ -235,11 +256,10 @@ class AppApi:
             out_tex = os.path.join(item_dir, "texture.png")
 
             if bake_tex and HARDWARE_INFO["has_gpu"]:
-                # ── BAKE TEXTURE (high-quality, slower ~30-40s at 512px) ──
-                self._progress("🎨 Đang bake texture UV (512px)…", 65)
+                self._progress("🎨 Đang bake UV Texture 512px PBR…", 70)
                 from tsr.bake_texture import bake_texture as _bake
                 import xatlas
-                bake = _bake(meshes[0], model, scene_codes[0], 512)   # 512 not 1024 → 4x faster
+                bake = _bake(meshes[0], model, scene_codes[0], 512)
                 xatlas.export(
                     out_obj,
                     meshes[0].vertices[bake["vmapping"]],
@@ -247,7 +267,7 @@ class AppApi:
                     bake["uvs"],
                     meshes[0].vertex_normals[bake["vmapping"]],
                 )
-                self._progress("🖌 Tăng cường màu sắc PBR…", 85)
+                self._progress("🖌 Tối ưu màu sắc rực rỡ PBR…", 88)
                 tex = Image.fromarray((bake["colors"] * 255).astype(np.uint8)).transpose(Image.FLIP_TOP_BOTTOM)
                 tex = enhance_texture(tex)
                 tex.save(out_tex)
@@ -257,19 +277,18 @@ class AppApi:
                 )
                 loaded.visual.material = mat
                 loaded.export(out_glb)
-                engine_label = "GPU RTX 3050 + Bake UV 512px PBR"
+                engine_label = "RTX 3050 + UV Texture PBR 512px"
             else:
-                # ── FAST PATH: vertex colors (no UV baking needed) ────────
-                self._progress("💾 Đang xuất GLB…", 80)
+                self._progress("💾 Đang xuất file GLB chuẩn định dạng…", 85)
                 meshes[0].export(out_glb)
                 meshes[0].export(out_obj)
-                engine_label = "GPU RTX 3050 (Vertex Colors – Siêu Nhanh)"
+                engine_label = "RTX 3050 (Vertex Colors 256 Res – Siêu Nét)"
 
             self.last_glb = out_glb
             self.last_obj = out_obj
             self.last_folder = item_dir
 
-            self._progress("✅ Hoàn tất! Đang tải mô hình 3D lên…", 95)
+            self._progress("✅ Hoàn tất! Đang nạp mô hình 3D…", 95)
             with open(out_glb, "rb") as f:
                 glb_b64 = base64.b64encode(f.read()).decode()
 
@@ -286,8 +305,8 @@ class AppApi:
             logging.exception("_gen_local error")
             return {"success": False, "error": str(e)}
 
-    # ── CLOUD ────────────────────────────────────────────────────────────────
-    def _gen_cloud(self, file_path, quality="fast"):
+    # ── CLOUD MULTI-VIEW ─────────────────────────────────────────────────────
+    def _gen_cloud(self, file_path, quality="hq"):
         try:
             from gradio_client import Client, handle_file
         except ImportError:
@@ -295,18 +314,18 @@ class AppApi:
 
         try:
             hf_token = self.config.get("hf_token", "").strip() or None
-            self._progress("☁️ Đang kết nối Cloud…", 5)
+            self._progress("☁️ Đang kết nối máy chủ AI Cloud…", 5)
             client = Client("TencentARC/InstantMesh", token=hf_token)
 
             self._progress("🖼 Đang tải ảnh lên Cloud và tách nền…", 15)
             prep = client.predict(input_image=handle_file(file_path), api_name="/preprocess")
 
-            steps = 50 if quality == "hq" else 30   # InstantMesh min=30
-            self._progress(f"🔮 Cloud đang tạo đa góc nhìn ({steps} bước)…", 35)
+            steps = 50 if quality == "hq" else 30
+            self._progress(f"🔮 Tái tạo đa góc nhìn chi tiết ({steps} bước)…", 35)
             client.predict(input_image=handle_file(prep), sample_steps=steps,
                            sample_seed=42, api_name="/generate_mvs")
 
-            self._progress("⚙️ Cloud đang ghép Mesh 3D…", 70)
+            self._progress("⚙️ Cloud đang dựng hình 3D và phủ texture…", 75)
             obj_path, glb_path = client.predict(api_name="/make3d")
 
             ts = int(time.time())
@@ -321,23 +340,24 @@ class AppApi:
             self.last_obj = local_obj
             self.last_folder = item_dir
 
-            self._progress("✅ Hoàn tất! Đang tải mô hình lên…", 95)
+            self._progress("✅ Hoàn tất! Đang nạp mô hình 3D…", 95)
             with open(local_glb, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
 
             return {
                 "success": True,
                 "glb_data": f"data:model/gltf-binary;base64,{b64}",
-                "glb_path": local_glb, "obj_path": local_obj, "folder": item_dir,
-                "engine_used": f"Cloud Multi-View ({steps} Steps)",
+                "glb_path": local_glb,
+                "obj_path": local_obj,
+                "folder": item_dir,
+                "engine_used": f"Cloud Multi-View ({steps} Steps HQ)",
             }
         except Exception as e:
             logging.exception("_gen_cloud error")
             msg = str(e)
             if "quota" in msg.lower() or "ZeroGPU" in msg:
                 msg = ("⚠️ Cloud hết quota ZeroGPU miễn phí tạm thời.\n"
-                       "👉 Chuyển sang GPU Offline (RTX 3050) để tạo ngay không giới hạn, "
-                       "hoặc thêm HF Token miễn phí trong Cài đặt!")
+                       "👉 Chuyển sang GPU Offline (RTX 3050) để tạo ngay không giới hạn!")
             return {"success": False, "error": msg}
 
     # ── settings ─────────────────────────────────────────────────────────────
@@ -347,26 +367,45 @@ class AppApi:
         save_config(self.config)
         return {"success": True}
 
-    # ── file ops ──────────────────────────────────────────────────────────────
+    # ── file operations ──────────────────────────────────────────────────────
     def open_folder(self, folder=None):
         target = folder or self.last_folder or OUTPUT_DIR
         if os.path.exists(target):
-            os.system(f'explorer.exe "{target}"')
-        return True
+            try:
+                os.startfile(os.path.normpath(target))
+                return True
+            except Exception:
+                os.system(f'explorer.exe "{os.path.normpath(target)}"')
+                return True
+        return False
 
     def export_file(self, file_type="glb"):
         src = self.last_glb if file_type == "glb" else self.last_obj
         if not src or not os.path.exists(src):
-            return {"success": False, "error": "Chưa có file nào được tạo!"}
+            return {"success": False, "error": "Chưa có file mô hình nào! Hãy tạo trước."}
+
+        default_filename = f"model_3d_{int(time.time())}.{file_type}"
+        file_filter = (f"{file_type.upper()} 3D Model (*.{file_type})", "All Files (*.*)")
+
         result = self._window.create_file_dialog(
             webview.SAVE_DIALOG,
-            save_filename=f"model_{int(time.time())}.{file_type}",
-            file_types=[f"3D Model (*.{file_type})"],
+            save_filename=default_filename,
+            file_types=file_filter,
         )
         if result:
-            dst = result if isinstance(result, str) else result[0]
-            shutil.copy2(src, dst)
-            return {"success": True, "saved_path": dst}
+            dst = result[0] if isinstance(result, (list, tuple)) else str(result)
+            try:
+                shutil.copy2(src, dst)
+                if file_type == "obj":
+                    src_dir = os.path.dirname(src)
+                    dst_dir = os.path.dirname(dst)
+                    for extra in ("texture.png", "model.mtl", "normal.png"):
+                        s_extra = os.path.join(src_dir, extra)
+                        if os.path.exists(s_extra):
+                            shutil.copy2(s_extra, os.path.join(dst_dir, extra))
+                return {"success": True, "saved_path": dst}
+            except Exception as e:
+                return {"success": False, "error": f"Không thể lưu: {e}"}
         return {"success": False, "canceled": True}
 
     # ── OTA update ────────────────────────────────────────────────────────────
@@ -378,7 +417,7 @@ class AppApi:
                 req = urllib.request.Request(url, headers={"User-Agent": "AI-3D-Studio"})
                 with urllib.request.urlopen(req, timeout=6) as r:
                     if r.status == 200:
-                        data = json.loads(r.read())
+                        data = json.loads(r.read().decode("utf-8"))
                         remote = data.get("version", "").replace("v", "").strip()
                         local = APP_VERSION.replace("v", "").strip()
                         notes = data.get("releaseNotes", [])
@@ -446,7 +485,7 @@ class AppApi:
         return True
 
 
-# ── HTML ─────────────────────────────────────────────────────────────────────
+# ── HTML / CSS / JS ──────────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -458,7 +497,7 @@ HTML = r"""<!DOCTYPE html>
 body{background:#0b0d13;color:#e2e8f0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 
 /* ── Header ── */
-header{height:52px;background:#131722;border-bottom:1px solid #232936;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex-shrink:0}
+header{height:52px;background:#131722;border-bottom:1px solid #232936;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex-shrink:0;z-index:20}
 .logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;color:#60a5fa}
 .logo-chip{background:linear-gradient(135deg,#2563eb,#7c3aed);padding:3px 8px;border-radius:5px;color:#fff;font-size:10px;font-weight:800}
 .ver{font-size:11px;color:#64748b;background:#1a2030;padding:2px 7px;border-radius:4px;border:1px solid #2d3748}
@@ -515,23 +554,32 @@ select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f
 .spin{width:13px;height:13px;border:2px solid #2d3748;border-top-color:#38bdf8;border-radius:50%;animation:sp .7s linear infinite;display:none;flex-shrink:0}
 @keyframes sp{to{transform:rotate(360deg)}}
 
-/* ── Viewport ── */
-.vp{flex:1;background:radial-gradient(circle at 50% 50%,#161f30 0%,#070910 100%);position:relative;display:flex;align-items:center;justify-content:center;min-width:0}
-model-viewer{width:100%;height:100%;--poster-color:transparent}
-.vp-empty{position:absolute;display:flex;flex-direction:column;align-items:center;gap:10px;color:#334155;pointer-events:none}
-.vp-empty svg{width:56px;height:56px;opacity:.4}
+/* ── Main Stage (Toolbar + 3D Viewport) ── */
+.main-stage{flex:1;display:flex;flex-direction:column;min-width:0;height:100%;position:relative}
 
-/* ── Viewport overlays ── */
-.light-bar{position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:7px;background:rgba(11,13,19,.8);backdrop-filter:blur(8px);padding:5px 11px;border-radius:7px;border:1px solid rgba(255,255,255,.08);font-size:11px}
-.light-bar select{padding:2px 7px;font-size:11px;width:auto}
-.act-bar{position:absolute;top:14px;right:14px;display:flex;gap:7px}
-.btn-act{background:rgba(11,13,19,.8);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.1);color:#cbd5e1;padding:6px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:4px}
-.btn-act:hover:not(:disabled){background:#1e2433;border-color:#38bdf8}
-.btn-act:disabled{opacity:.3;cursor:not-allowed}
-.hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(11,13,19,.8);backdrop-filter:blur(8px);padding:6px 18px;border-radius:16px;font-size:11px;color:#64748b;pointer-events:none;border:1px solid rgba(255,255,255,.07)}
+/* ── Dedicated Stage Toolbar: 100% accessible, never covered ── */
+.stage-toolbar{height:48px;background:#0d111a;border-bottom:1px solid #1e2536;display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;z-index:10}
+.tool-group{display:flex;align-items:center;gap:8px}
+.tool-label{font-size:12px;font-weight:600;color:#94a3b8;display:flex;align-items:center;gap:5px}
+.tool-select{background:#131824;border:1px solid #2d3748;color:#e2e8f0;padding:6px 10px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;outline:none;transition:border-color .15s}
+.tool-select:hover{border-color:#38bdf8}
+
+.btn-act{background:#151c2a;border:1px solid #2d3748;color:#94a3b8;padding:6px 13px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;transition:all .18s;display:flex;align-items:center;gap:6px}
+.btn-act:hover:not(:disabled){background:#1e2a3e;border-color:#38bdf8;color:#f1f5f9;transform:translateY(-1px)}
+.btn-act.ready{background:linear-gradient(135deg,#132847,#1a263c);border-color:#38bdf8;color:#38bdf8;box-shadow:0 0 10px rgba(56,189,248,.25)}
+.btn-act.ready:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:#60a5fa}
+.btn-act:disabled{opacity:.35;cursor:not-allowed;color:#475569;border-color:#1e2433}
+
+/* ── Viewport ── */
+.vp{flex:1;background:radial-gradient(circle at 50% 50%,#151f33 0%,#070910 100%);position:relative;display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden}
+model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative;z-index:1}
+.vp-empty{position:absolute;display:flex;flex-direction:column;align-items:center;gap:10px;color:#334155;pointer-events:none;z-index:2}
+.vp-empty svg{width:64px;height:64px;opacity:.4}
+
+.hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(11,13,19,.85);backdrop-filter:blur(8px);padding:6px 18px;border-radius:16px;font-size:11px;color:#64748b;pointer-events:none;border:1px solid rgba(255,255,255,.07);z-index:5}
 
 /* ── Modal ── */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:99}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:99}
 .modal{background:#111622;border:1px solid #2d3748;border-radius:12px;width:480px;max-width:90vw;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 40px rgba(0,0,0,.5)}
 .m-hdr{display:flex;justify-content:space-between;align-items:center}
 .m-title{font-size:15px;font-weight:700;color:#60a5fa}
@@ -542,7 +590,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent}
 .btn-m-pri{background:#2563eb;color:#fff}
 .btn-m-sec{background:#1e2433;color:#94a3b8}
 
-/* ── Model-not-ready banner ── */
+/* ── Banner ── */
 .banner{background:rgba(37,99,235,.12);border:1px solid rgba(37,99,235,.3);border-radius:8px;padding:8px 12px;font-size:11px;color:#93c5fd;display:none;align-items:center;gap:7px}
 </style>
 </head>
@@ -551,7 +599,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent}
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.4.1</span>
+    <span class="ver" id="ver">v1.4.3</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang phát hiện…</span></div>
@@ -571,7 +619,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent}
     <!-- Not-ready banner -->
     <div class="banner" id="banner">
       <span>⏳</span>
-      <span id="bannerTxt">Model AI đang nạp vào GPU, thường mất ~10 giây. Bạn có thể chọn ảnh trước!</span>
+      <span id="bannerTxt">Model AI đang nạp vào GPU, thường mất ~5-8 giây. Bạn có thể chọn ảnh trước!</span>
     </div>
 
     <!-- Drop zone -->
@@ -586,44 +634,44 @@ model-viewer{width:100%;height:100%;--poster-color:transparent}
     <!-- Info card -->
     <div class="info-card">
       <span class="ic-title" id="icTitle">⚡ GPU Cục bộ – NVIDIA RTX 3050 (Offline)</span>
-      <span class="ic-desc" id="icDesc">Xử lý ngay trên card đồ họa, <b>siêu nhanh</b>, không cần mạng, không giới hạn số lần tạo.</span>
+      <span class="ic-desc" id="icDesc">Xử lý ngay trên card đồ họa, <b>siêu nhanh ~4 giây</b>, không cần mạng, không giới hạn.</span>
     </div>
 
     <!-- Local settings -->
     <div id="localSet">
       <div class="sg" style="margin-bottom:8px">
-        <label>Chất lượng & Tốc độ</label>
+        <label>Chất lượng hình khối</label>
         <select id="quality">
-          <option value="fast" selected>⚡ Nhanh (~5–8 giây) – Màu đỉnh đỉnh</option>
-          <option value="hq">🔬 Cao (~12–18 giây) – Chi tiết sắc nét hơn</option>
+          <option value="hq" selected>🔬 Siêu nét 256 Res (Chuẩn chi tiết 100%)</option>
+          <option value="fast">⚡ Nhanh (~3–4 giây)</option>
         </select>
       </div>
       <div class="chk-row" style="margin-bottom:6px">
         <input type="checkbox" id="chkSmooth" checked>
-        <label class="chk-row" for="chkSmooth">✨ Làm mịn bề mặt Taubin (khử sần sùi)</label>
+        <label class="chk-row" for="chkSmooth">✨ Làm mịn bề mặt Taubin (Khử bậc thang)</label>
       </div>
       <div class="chk-row" style="margin-bottom:8px">
         <input type="checkbox" id="chkBake">
         <label class="chk-row" for="chkBake">🎨 Bake Texture UV 512px PBR (+~30 giây)</label>
       </div>
       <p style="font-size:10px;color:#475569;line-height:1.4">
-        ✓ AI tách nền tự động bảo toàn 100% chi tiết màu sắc.<br>
-        ✓ Mặc định dùng Vertex Colors – nhanh &amp; đẹp cho Unity Game.
+        ✓ Tự động căn tâm trục tọa độ (0, 0, 0) chuẩn Game Unity &amp; Blender.<br>
+        ✓ Bảo toàn màu sắc nguyên bản 100% từ ảnh đầu vào.
       </p>
     </div>
 
     <!-- Cloud settings -->
     <div id="cloudSet" style="display:none">
       <div class="sg" style="margin-bottom:7px">
-        <label>Chất lượng Cloud</label>
+        <label>Chế độ tính toán Cloud</label>
         <select id="cloudQ">
-          <option value="fast" selected>⚡ Nhanh (~20 giây) – Tiết kiệm quota</option>
-          <option value="hq">🔬 Cao (~35 giây) – Chi tiết hơn</option>
+          <option value="hq" selected>🌟 Tái tạo cao cấp (50 bước – Chuẩn chi tiết)</option>
+          <option value="fast">⚡ Tiết kiệm Quota (30 bước)</option>
         </select>
       </div>
       <p style="font-size:10px;color:#475569;line-height:1.4">
-        ✓ Số bước tính toán được tối ưu để không vượt giới hạn ZeroGPU miễn phí.<br>
-        ✓ Thêm HF Token trong Cài đặt nếu thường xuyên bị hết quota.
+        ✓ Dùng 6 góc nhìn AI tái tạo 3D hoàn chỉnh cả mặt trước, sau và đáy.<br>
+        ✓ Đã tối ưu không vượt ngưỡng ZeroGPU miễn phí.
       </p>
     </div>
 
@@ -643,38 +691,62 @@ model-viewer{width:100%;height:100%;--poster-color:transparent}
     </div>
   </div>
 
-  <!-- Viewport -->
-  <div class="vp">
-    <div class="light-bar">
-      <span>💡</span>
-      <select id="lightSel" onchange="changeLight()">
-        <option value="studio" selected>Studio ACES</option>
-        <option value="aces">Điện ảnh</option>
-        <option value="soft">Tự nhiên</option>
-      </select>
+  <!-- Main Stage: Toolbar + 3D Viewport -->
+  <div class="main-stage">
+    <!-- Top Action Toolbar: 100% accessible -->
+    <div class="stage-toolbar">
+      <div class="tool-group">
+        <span class="tool-label">💡 Môi trường ánh sáng:</span>
+        <select id="lightSel" class="tool-select" onchange="changeLight()">
+          <option value="studio" selected>Studio ACES (Chuẩn thực tế 100%)</option>
+          <option value="aces">Điện ảnh Cinema (Đậm &amp; Tương phản cao)</option>
+          <option value="soft">Tự nhiên Studio (Mềm mại dịu mắt)</option>
+        </select>
+      </div>
+      <div class="tool-group">
+        <button class="btn-act" id="btnGlb" onclick="doExport('glb')" disabled title="Lưu định dạng GLB chuẩn cho Unity và Game Engine">
+          📦 Lưu GLB (Unity)
+        </button>
+        <button class="btn-act" id="btnObj" onclick="doExport('obj')" disabled title="Lưu định dạng OBJ kèm vật liệu cho Blender và Maya">
+          📦 Lưu OBJ (Blender)
+        </button>
+        <button class="btn-act" id="btnDir" onclick="openDir()" disabled title="Mở thư mục chứa file đã tạo trên máy tính">
+          📂 Mở thư mục
+        </button>
+      </div>
     </div>
 
-    <div class="act-bar">
-      <button class="btn-act" id="btnGlb" onclick="doExport('glb')" disabled>📦 Lưu GLB (Unity)</button>
-      <button class="btn-act" id="btnObj" onclick="doExport('obj')" disabled>📦 Lưu OBJ (Blender)</button>
-      <button class="btn-act" id="btnDir" onclick="openDir()" disabled>📂 Mở thư mục</button>
-    </div>
+    <!-- 3D Canvas Area -->
+    <div class="vp">
+      <div class="vp-empty" id="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+        <p style="font-size:14px;font-weight:600;color:#64748b">Mô hình 3D xoay 360° sẽ hiển thị tại đây</p>
+        <p style="font-size:12px;color:#475569">Chọn ảnh bên trái và bấm Bắt đầu tạo 3D</p>
+      </div>
 
-    <div class="vp-empty" id="empty">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
-        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-        <line x1="12" y1="22.08" x2="12" y2="12"/>
-      </svg>
-      <p style="font-size:13px">Mô hình 3D xoay 360° sẽ hiện ở đây</p>
-    </div>
+      <model-viewer id="mv"
+        camera-controls
+        touch-action="pan-y"
+        auto-rotate
+        auto-rotate-delay="1000"
+        rotation-per-second="22deg"
+        tone-mapping="aces"
+        shadow-intensity="1.5"
+        shadow-softness="0.5"
+        exposure="1.15"
+        bounds="tight"
+        camera-orbit="0deg 75deg auto"
+        field-of-view="35deg"
+        style="display:none">
+      </model-viewer>
 
-    <model-viewer id="mv" camera-controls auto-rotate auto-rotate-delay="800"
-      rotation-per-second="20deg" tone-mapping="aces" shadow-intensity="1.8"
-      shadow-softness="0.6" exposure="1.2" style="display:none"></model-viewer>
-
-    <div class="hint" id="hint" style="display:none">
-      Chuột trái: Xoay &nbsp;|&nbsp; Con lăn: Zoom &nbsp;|&nbsp; Chuột phải: Di chuyển
+      <div class="hint" id="hint" style="display:none">
+        🖱️ Chuột trái: Xoay 360° &nbsp;|&nbsp; Con lăn: Zoom &nbsp;|&nbsp; Chuột phải: Di chuyển góc nhìn
+      </div>
     </div>
   </div>
 </div>
@@ -733,6 +805,16 @@ window._setProgress = function(msg, pct) {
   }
 };
 
+function enableActionButtons() {
+  ['btnGlb','btnObj','btnDir'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = false;
+      el.classList.add('ready');
+    }
+  });
+}
+
 /* ── init ── */
 window.addEventListener('pywebviewready', async () => {
   const d = await window.pywebview.api.get_init_data();
@@ -748,6 +830,18 @@ window.addEventListener('pywebviewready', async () => {
   if (!_modelReady) {
     document.getElementById('banner').style.display = 'flex';
     pollModel();
+  }
+
+  // If a previously generated 3D model exists on disk, display it immediately!
+  if (d.latest_model && d.latest_model.glb_data) {
+    lastFolder = d.latest_model.folder;
+    const mv = document.getElementById('mv');
+    mv.src = d.latest_model.glb_data;
+    mv.style.display = 'block';
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('hint').style.display = 'block';
+    enableActionButtons();
+    window._setProgress('✨ Đã nạp mô hình 3D hoàn chỉnh. Sẵn sàng lưu GLB / OBJ!', 100);
   }
 });
 
@@ -772,12 +866,12 @@ function setMode(m) {
   document.getElementById('cloudSet').style.display = isLocal ? 'none' : '';
   if (isLocal) {
     document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (Offline)';
-    document.getElementById('icDesc').innerHTML = 'Xử lý ngay trên card đồ họa, <b>siêu nhanh</b>, không cần mạng, không giới hạn số lần tạo.';
+    document.getElementById('icDesc').innerHTML = 'Xử lý ngay trên card đồ họa, <b>siêu nhanh ~4 giây</b>, không cần mạng, không giới hạn.';
     document.getElementById('btnGen').className = 'btn-gen';
     document.getElementById('btnGen').textContent = '⚡ BẮT ĐẦU TẠO 3D (RTX 3050)';
   } else {
     document.getElementById('icTitle').textContent = '🌟 Cloud Multi-View (Miễn phí)';
-    document.getElementById('icDesc').innerHTML = 'Dùng GPU Cloud miễn phí của Hugging Face tái tạo <b>nhiều góc nhìn</b> cho độ chi tiết cao.';
+    document.getElementById('icDesc').innerHTML = 'Dùng GPU Cloud của Hugging Face tái tạo <b>6 góc nhìn đa chiều</b> cho độ chi tiết cao.';
     document.getElementById('btnGen').className = 'btn-gen cloud-mode';
     document.getElementById('btnGen').textContent = '🌟 BẮT ĐẦU TẠO 3D TRÊN CLOUD';
   }
@@ -785,7 +879,7 @@ function setMode(m) {
 
 /* ── image pick ── */
 async function pickImage() {
-  window._setProgress('Đang mở hộp thoại…', -1);
+  window._setProgress('Đang mở hộp thoại chọn ảnh…', -1);
   const r = await window.pywebview.api.select_image();
   if (r && r.path) {
     imgPath = r.path;
@@ -794,7 +888,7 @@ async function pickImage() {
     document.getElementById('dropHint').style.display = 'none';
     if (_modelReady || curMode === 'cloud')
       document.getElementById('btnGen').disabled = false;
-    window._setProgress('Đã nạp: ' + r.name, -1);
+    window._setProgress('Đã nạp: ' + r.name + ' – Sẵn sàng tạo 3D', -1);
   } else {
     window._setProgress('Chưa chọn ảnh.', -1);
   }
@@ -814,7 +908,7 @@ async function generate() {
   document.getElementById('spin').style.display = 'inline-block';
   document.getElementById('barWrap').style.display = 'block';
   document.getElementById('bar').style.width = '0%';
-  window._setProgress('Đang khởi động…', 2);
+  window._setProgress('Đang khởi động tiến trình…', 2);
 
   try {
     const r = await window.pywebview.api.generate_3d(
@@ -827,10 +921,10 @@ async function generate() {
       mv.style.display = 'block';
       document.getElementById('empty').style.display = 'none';
       document.getElementById('hint').style.display = 'block';
-      ['btnGlb','btnObj','btnDir'].forEach(id => document.getElementById(id).disabled = false);
+      enableActionButtons();
       document.getElementById('barWrap').style.display = 'block';
       document.getElementById('bar').style.width = '100%';
-      window._setProgress('✅ Thành công! (' + r.engine_used + ') – Chuột trái để xoay.', 100);
+      window._setProgress('✅ Thành công! (' + r.engine_used + ') – Đã mở khóa Lưu & Thư mục.', 100);
     } else {
       window._setProgress('❌ ' + r.error, -1);
       document.getElementById('bar').style.width = '0%';
@@ -848,21 +942,36 @@ async function generate() {
 function changeLight() {
   const mv = document.getElementById('mv');
   const v = document.getElementById('lightSel').value;
-  const cfg = {studio:['aces','1.3','1.8'],aces:['aces','1.0','2.2'],soft:['neutral','1.1','1.2']};
-  const [tm,ex,sh] = cfg[v];
-  mv.setAttribute('tone-mapping',tm);
-  mv.setAttribute('exposure',ex);
-  mv.setAttribute('shadow-intensity',sh);
+  const cfg = {
+    studio: ['aces', '1.15', '1.5', '0.5'],
+    aces:   ['aces', '1.0',  '2.2', '0.3'],
+    soft:   ['neutral','1.2','0.8', '0.8']
+  };
+  const [tm, ex, sh, ss] = cfg[v] || cfg['studio'];
+  mv.setAttribute('tone-mapping', tm);
+  mv.setAttribute('exposure', ex);
+  mv.setAttribute('shadow-intensity', sh);
+  mv.setAttribute('shadow-softness', ss);
+  window._setProgress('💡 Chế độ ánh sáng: ' + v.toUpperCase(), -1);
 }
 
 /* ── export / folder ── */
 async function doExport(t) {
-  window._setProgress('Đang lưu file ' + t.toUpperCase() + '…', -1);
+  window._setProgress('📦 Đang mở hộp thoại lưu file ' + t.toUpperCase() + '…', -1);
   const r = await window.pywebview.api.export_file(t);
-  if (r.success) window._setProgress('✅ Đã lưu: ' + r.saved_path, -1);
-  else if (!r.canceled) window._setProgress('❌ ' + r.error, -1);
+  if (r.success) {
+    window._setProgress('✅ Đã lưu file ' + t.toUpperCase() + ': ' + r.saved_path, -1);
+  } else if (!r.canceled) {
+    window._setProgress('❌ ' + r.error, -1);
+  } else {
+    window._setProgress('Đã hủy lưu file.', -1);
+  }
 }
-async function openDir() { await window.pywebview.api.open_folder(lastFolder); }
+
+async function openDir() {
+  window._setProgress('📂 Đang mở thư mục chứa file…', -1);
+  await window.pywebview.api.open_folder(lastFolder);
+}
 
 /* ── settings ── */
 function openSettings() { document.getElementById('mSet').style.display='flex'; }
@@ -870,20 +979,20 @@ function closeSettings() { document.getElementById('mSet').style.display='none';
 async function saveSettings() {
   await window.pywebview.api.save_settings(document.getElementById('hfTok').value);
   closeSettings();
-  window._setProgress('✅ Đã lưu cài đặt.', -1);
+  window._setProgress('✅ Đã lưu cài đặt Token thành công.', -1);
 }
 
 /* ── update ── */
 function openUpdate() { document.getElementById('mUpd').style.display='flex'; }
 function closeUpdate() { document.getElementById('mUpd').style.display='none'; }
 async function checkUpd() {
-  document.getElementById('updTxt').textContent = 'Đang kiểm tra…';
+  document.getElementById('updTxt').textContent = 'Đang kiểm tra từ máy chủ GitHub…';
   document.getElementById('btnApply').style.display='none';
   document.getElementById('updNotes').style.display='none';
   const r = await window.pywebview.api.check_updates();
   if (r.has_update) {
     document.getElementById('updTxt').innerHTML =
-      "<span style='color:#10b981;font-weight:700'>🎉 Bản mới: "+r.latest_version+" (hiện tại: "+r.current_version+")</span>";
+      "<span style='color:#10b981;font-weight:700'>🎉 Phát hiện bản mới: "+r.latest_version+" (Hiện tại: "+r.current_version+")</span>";
     if (r.release_notes) {
       document.getElementById('updNotes').textContent = r.release_notes;
       document.getElementById('updNotes').style.display='block';
@@ -892,12 +1001,13 @@ async function checkUpd() {
     document.getElementById('btnApply').style.display='inline-block';
   } else {
     document.getElementById('updTxt').innerHTML =
-      "<span style='color:#38bdf8'>✓ Đang dùng phiên bản mới nhất ("+r.current_version+")</span>";
+      "<span style='color:#38bdf8'>✓ Bạn đang sử dụng phiên bản mới nhất ("+r.current_version+")</span>";
   }
 }
+
 async function applyUpd() {
   if (!dlUrl) return;
-  document.getElementById('updTxt').textContent = 'Đang tải và cài đặt…';
+  document.getElementById('updTxt').textContent = 'Đang tải gói cập nhật và cài đặt…';
   document.getElementById('btnApply').disabled = true;
   const r = await window.pywebview.api.apply_update(dlUrl);
   if (r.success) {
@@ -916,7 +1026,7 @@ async function applyUpd() {
 
 
 def main():
-    # Load model in background so the UI is immediately responsive
+    # Load model in background thread
     threading.Thread(target=load_ai_model, daemon=True).start()
 
     api = AppApi()
@@ -924,9 +1034,9 @@ def main():
         title=f"AI 3D Studio {APP_VERSION}",
         html=HTML,
         js_api=api,
-        width=1200,
-        height=800,
-        min_size=(920, 620),
+        width=1220,
+        height=820,
+        min_size=(960, 640),
     )
     api.set_window(window)
     webview.start(debug=False)

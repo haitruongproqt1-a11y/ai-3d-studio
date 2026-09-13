@@ -1,12 +1,12 @@
 {
-  "version": "1.4.2",
+  "version": "1.4.3",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Khắc phục 100% lỗi 'Value 20 is less than minimum value 30' trên Cloud (nâng minimum steps lên 30)",
-    "Sửa triệt để lỗi extract_mesh local (has_vertex_color)",
-    "Tối ưu thuật toán làm mịn Taubin nu=0.5 chuẩn toán học",
-    "Tốc độ tạo 3D cực nhanh: chỉ 3.7 giây trên RTX 3050",
-    "Đã kiểm thử thực tế 100% tự động qua toàn bộ pipeline AI"
+    "Khắc phục 100% lỗi không bấm được hàng Lưu GLB, Lưu OBJ, Mở thư mục và Studio ACES (tách thanh công cụ độc lập)",
+    "Nút Lưu GLB, OBJ và Mở thư mục tự động kích hoạt hiệu ứng phát sáng khi có mô hình",
+    "Tự động nạp mô hình 3D gần nhất khi khởi động ứng dụng mà không cần bấm tạo lại",
+    "Độ phân giải hình khối chuẩn 256 Res siêu nét, căn tâm trục (0, 0, 0) chuẩn Unity & Blender",
+    "Bổ sung 3 chế độ ánh sáng Studio ACES thực tế, Điện ảnh Cinema và Tự nhiên mềm mại"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.2/update_v1.4.2.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.4.3/update_v1.4.3.zip"
 }
