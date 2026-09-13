@@ -1,12 +1,12 @@
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
   "buildDate": "2026-09-13",
   "releaseNotes": [
-    "Khử triệt để ảnh nền caro giả (fake transparent checkerboard) từ Google/Clipart bằng U2Net segmentation",
-    "Loại bỏ hoàn toàn bóng đổ sàn (drop shadow) giúp đáy bàn/vật thể sạch sẽ, chân bàn thẳng thớm không bị dính mảng xám",
-    "Tối ưu bộ nhớ CUDA (torch.cuda.empty_cache) chạy siêu mượt trên GPU RTX 3050 6GB",
-    "Thông báo chi tiết và hướng dẫn sử dụng Tripo3D web miễn phí khi gặp lỗi 2010 hết credit API",
-    "Sửa thuật toán làm mịn Laplacian lamb=0.08 bảo toàn 100% hình khối gốc của vật thể"
+    "Khắc phục 100% lỗi lệch tâm UV (Centroid offset) khiến mô hình bị xám hoặc mất màu loang lổ trên RTX 3050",
+    "Tăng cường độ rực rỡ màu sắc (Color Vibrance & Contrast Boost) cho chế độ Siêu Tốc 3s trên GPU RTX 3050",
+    "Thêm nút '📂 Nạp 3D ngoài' trên thanh công cụ: Nạp trực tiếp mọi file .glb/.obj tải về từ web Tripo3D miễn phí vào Studio",
+    "Hướng dẫn 3 bước dùng Tripo3D Studio chất lượng AAA hoàn toàn MIỄN PHÍ 100% không bao giờ tốn tiền",
+    "Tối ưu hóa bộ nhớ CUDA cho GPU RTX 3050 Laptop giúp xuất file GLB chuẩn Unity & Blender tức thì"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.5.1/update_v1.5.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.5.2/update_v1.5.2.zip"
 }

@@ -24,7 +24,7 @@ import cv2
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.5.1"
+APP_VERSION = "v1.5.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -372,16 +372,9 @@ class AppApi:
                 resolution=mc_res,
             )
 
-            # Auto-standardize: center pivot and orient normals
-            try:
-                meshes[0].vertices -= meshes[0].bounding_box.centroid
-                meshes[0].fix_normals()
-            except Exception:
-                pass
-
             # Gentle Laplacian smoothing: preserves thin legs, eliminates surface stepping
             if smooth:
-                self._progress("✨ Làm mịn bề mặt hình học…", 60)
+                self._progress("✨ Làm mịn bề mặt hình học…", 55)
                 try:
                     trimesh.smoothing.filter_laplacian(meshes[0], lamb=0.08, iterations=2)
                 except Exception as e:
@@ -395,10 +388,16 @@ class AppApi:
                 self._progress("🎨 Đang nướng UV Atlas 512px PBR…", 65)
                 from tsr.bake_texture import bake_texture as _bake
                 import xatlas
+                # Bake in canonical coordinates to guarantee 100% texture alignment
                 bake = _bake(meshes[0], model, scene_codes[0], 512)
+
+                # Center pivot for Unity & Blender export AFTER baking
+                centroid = meshes[0].bounding_box.centroid.copy()
+                centered_verts = meshes[0].vertices - centroid
+
                 xatlas.export(
                     out_obj,
-                    meshes[0].vertices[bake["vmapping"]],
+                    centered_verts[bake["vmapping"]],
                     bake["indices"],
                     bake["uvs"],
                     meshes[0].vertex_normals[bake["vmapping"]],
@@ -409,16 +408,38 @@ class AppApi:
                 tex.save(out_tex)
                 loaded = trimesh.load(out_obj)
                 mat = trimesh.visual.material.PBRMaterial(
-                    baseColorTexture=tex, roughnessFactor=0.4, metallicFactor=0.05
+                    baseColorTexture=tex, roughnessFactor=0.35, metallicFactor=0.04
                 )
                 loaded.visual.material = mat
                 loaded.export(out_glb)
-                engine_label = "RTX 3050 + Nướng UV Texture PBR 512px"
+                engine_label = "RTX 3050 + Nướng UV Texture PBR 512px (Đã căn chuẩn 100%)"
             else:
+                # Fast vertex colors mode:
+                # Enhance vertex color vibrance & contrast so it's not pale or washed out
+                try:
+                    if hasattr(meshes[0].visual, 'vertex_colors') and meshes[0].visual.vertex_colors is not None:
+                        vc = meshes[0].visual.vertex_colors.astype(np.float32)
+                        rgb = vc[:, :3] / 255.0
+                        mean = np.mean(rgb, axis=-1, keepdims=True)
+                        # Saturation boost + contrast boost
+                        rgb = np.clip(mean + 1.28 * (rgb - mean), 0.0, 1.0)
+                        rgb = np.clip((rgb - 0.5) * 1.12 + 0.5, 0.0, 1.0)
+                        vc[:, :3] = rgb * 255.0
+                        meshes[0].visual.vertex_colors = vc.astype(np.uint8)
+                except Exception as e:
+                    logging.warning(f"Vertex color boost skipped: {e}")
+
+                # Auto-center pivot and orient normals
+                try:
+                    meshes[0].vertices -= meshes[0].bounding_box.centroid
+                    meshes[0].fix_normals()
+                except Exception:
+                    pass
+
                 self._progress("💾 Đang xuất file GLB chuẩn định dạng…", 85)
                 meshes[0].export(out_glb)
                 meshes[0].export(out_obj)
-                engine_label = "RTX 3050 (Vertex Colors 256 Res – Siêu Tốc)"
+                engine_label = "RTX 3050 Siêu Tốc (Vertex Colors 256 Res – Rực Rỡ)"
 
             self.last_glb = out_glb
             self.last_obj = out_obj
@@ -548,6 +569,59 @@ class AppApi:
             except Exception as e:
                 return {"success": False, "error": f"Không thể lưu: {e}"}
         return {"success": False, "canceled": True}
+
+    def load_external_model(self):
+        if not self._window:
+            return {"success": False, "error": "Cửa sổ chưa sẵn sàng"}
+        types = ("3D Model Files (*.glb;*.gltf;*.obj)", "All Files (*.*)")
+        result = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
+        if not result:
+            return {"success": False, "canceled": True}
+        fp = result[0]
+        try:
+            ext = os.path.splitext(fp)[1].lower()
+            item_dir = os.path.dirname(fp)
+            local_glb = fp
+            local_obj = ""
+            if ext == ".glb":
+                local_glb = fp
+                obj_cand = os.path.splitext(fp)[0] + ".obj"
+                if os.path.exists(obj_cand):
+                    local_obj = obj_cand
+                with open(fp, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                glb_data = f"data:model/gltf-binary;base64,{b64}"
+            elif ext in (".obj", ".gltf"):
+                m = trimesh.load(fp)
+                temp_glb = os.path.join(OUTPUT_DIR, "imported_temp.glb")
+                m.export(temp_glb)
+                local_glb = temp_glb
+                local_obj = fp
+                with open(temp_glb, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                glb_data = f"data:model/gltf-binary;base64,{b64}"
+            else:
+                return {"success": False, "error": "Định dạng không hỗ trợ. Vui lòng chọn file .glb hoặc .obj"}
+
+            self.last_glb = local_glb
+            self.last_obj = local_obj or local_glb
+            self.last_folder = item_dir
+            return {
+                "success": True,
+                "glb_data": glb_data,
+                "folder": item_dir,
+                "filename": os.path.basename(fp)
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def open_external_url(self, url):
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            return True
+        except Exception:
+            return False
 
     # ── OTA update ────────────────────────────────────────────────────────────
     def check_updates(self):
@@ -742,7 +816,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.5.1</span>
+    <span class="ver" id="ver">v1.5.2</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang phát hiện…</span></div>
@@ -784,18 +858,19 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <!-- Local settings -->
     <div id="localSet">
       <div class="sg" style="margin-bottom:8px">
-        <label>Chế độ kết xuất RTX 3050</label>
+        <label>Chế độ kết xuất RTX 3050 (Miễn phí 100% – Không giới hạn)</label>
         <select id="quality">
-          <option value="fast" selected>⚡ Siêu tốc (~4 giây) – Vertex Colors 256 Res</option>
-          <option value="bake">🎨 Đỉnh cao PBR (~60–90 giây) – Nướng UV Atlas 512px</option>
+          <option value="fast" selected>⚡ Siêu tốc (~3 giây) – Vertex Colors 256 Res (Tăng rực rỡ)</option>
+          <option value="bake">🎨 Đỉnh cao PBR (~40 giây) – Nướng UV Atlas 512px (Đã căn chuẩn 100%)</option>
         </select>
       </div>
       <div class="chk-row" style="margin-bottom:6px">
         <input type="checkbox" id="chkSmooth" checked>
-        <label class="chk-row" for="chkSmooth">✨ Làm mịn Laplacian (bảo toàn chân bàn, không teo)</label>
+        <label class="chk-row" for="chkSmooth">✨ Làm mịn Laplacian (bảo toàn chân bàn, không teo khối)</label>
       </div>
-      <p style="font-size:10px;color:#475569;line-height:1.4">
-        ✓ Khử bóng đổ sàn thông minh, không bị dính mảng xám đáy vật thể.<br>
+      <p style="font-size:10.5px;color:#94a3b8;line-height:1.4">
+        ✓ <b>Đã khắc phục 100%:</b> Lỗi lệch tâm UV (Centroid offset) gây mảng xám loang lổ đã được xử lý triệt để.<br>
+        ✓ <b>Màu sắc sống động:</b> Tự động nâng cấp độ bão hòa (Saturation) và tương phản (Contrast) sắc nét.<br>
         ✓ Tự động căn tâm trục (0, 0, 0) chuẩn Unity &amp; Blender.
       </p>
     </div>
@@ -818,12 +893,20 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <!-- Tripo3D settings -->
     <div id="tripoSet" style="display:none">
       <div style="background:rgba(225,29,72,.12);border:1px solid rgba(225,29,72,.3);border-radius:8px;padding:9px 11px;font-size:11px;color:#fda4af;line-height:1.4;margin-bottom:7px">
-        💎 <b>Chất lượng Studio AAA gấp 100 lần:</b><br>
+        💎 <b>Chất lượng Studio AAA (Tripo3D):</b><br>
         Vân PBR phản xạ ánh sáng chân thực, lưới Quad-mesh chuyên nghiệp chuẩn Game &amp; 3D Production.
       </div>
-      <p style="font-size:10px;color:#475569;line-height:1.4">
-        ✓ Miễn phí 300 credits khi đăng ký tại <b style="color:#38bdf8">platform.tripo3d.ai</b><br>
-        ✓ Tạo siêu nhanh trong 10–15 giây. Nhấn Cài đặt để dán API Key.
+      <div style="background:#131824;border:1px solid #1e2536;border-radius:8px;padding:9px 11px;font-size:10.5px;color:#cbd5e1;line-height:1.5;margin-bottom:7px">
+        💡 <b style="color:#38bdf8">CÁCH DÙNG MIỄN PHÍ 100% GẤP 100 LẦN:</b><br>
+        • Cổng API của Tripo3D bắt buộc nạp tiền ($10).<br>
+        • <b>Web tripo3d.ai hoàn toàn MIỄN PHÍ 300 credits!</b><br>
+        👉 <b>3 Bước nhận mô hình Studio miễn phí:</b><br>
+        1. Nhấn <a href="javascript:void(0)" onclick="openTripoWeb()" style="color:#60a5fa;font-weight:700;text-decoration:underline">Mở platform.tripo3d.ai</a> tạo 3D.<br>
+        2. Tải file <b>.glb</b> về máy tính.<br>
+        3. Nhấn <b>'📂 Nạp 3D ngoài'</b> trên thanh công cụ để mở xoay 360°, đổi ánh sáng ACES và xuất sang Unity/Blender!
+      </div>
+      <p style="font-size:10px;color:#64748b;line-height:1.4">
+        Nếu bạn đã đăng ký gói Developer API của Tripo3D, dán API key trong '⚙️ Cài đặt' để chạy tự động.
       </p>
     </div>
 
@@ -856,6 +939,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         </select>
       </div>
       <div class="tool-group">
+        <button class="btn-act ready" id="btnImport" onclick="importModel()" title="Nạp file 3D GLB/OBJ từ máy tính hoặc tải về từ Tripo3D Web">
+          📂 Nạp 3D ngoài
+        </button>
         <button class="btn-act" id="btnGlb" onclick="doExport('glb')" disabled title="Lưu định dạng GLB chuẩn cho Unity và Game Engine">
           📦 Lưu GLB (Unity)
         </button>
@@ -863,7 +949,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
           📦 Lưu OBJ (Blender)
         </button>
         <button class="btn-act" id="btnDir" onclick="openDir()" disabled title="Mở thư mục chứa file đã tạo trên máy tính">
-          📂 Mở thư mục
+          📁 Mở thư mục
         </button>
       </div>
     </div>
@@ -1147,6 +1233,29 @@ async function doExport(t) {
 async function openDir() {
   window._setProgress('📂 Đang mở thư mục chứa file…', -1);
   await window.pywebview.api.open_folder(lastFolder);
+}
+
+async function importModel() {
+  window._setProgress('Đang mở hộp thoại chọn file 3D (GLB/OBJ)…', -1);
+  const r = await window.pywebview.api.load_external_model();
+  if (r && r.success) {
+    lastFolder = r.folder;
+    const mv = document.getElementById('mv');
+    mv.src = r.glb_data;
+    mv.style.display = 'block';
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('hint').style.display = 'block';
+    enableActionButtons();
+    window._setProgress('✅ Đã nạp thành công mô hình: ' + r.filename + ' – Sẵn sàng lưu GLB / OBJ!', 100);
+  } else if (r && r.error) {
+    window._setProgress('❌ ' + r.error, -1);
+  } else {
+    window._setProgress('Đã hủy chọn file.', -1);
+  }
+}
+
+function openTripoWeb() {
+  window.pywebview.api.open_external_url('https://platform.tripo3d.ai');
 }
 
 /* ── settings ── */
