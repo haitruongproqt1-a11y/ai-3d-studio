@@ -19,13 +19,7 @@ os.environ["HF_HOME"] = os.path.join(CACHE_DIR, "huggingface")
 os.environ["TORCH_HOME"] = os.path.join(CACHE_DIR, "torch")
 os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
 
-# Single instance lock: prevent duplicate background processes from exhausting RTX 3050 VRAM
-_instance_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    _instance_socket.bind(('127.0.0.1', 49199))
-except socket.error:
-    logging.warning("AI 3D Studio already running. Exiting duplicate instance.")
-    sys.exit(0)
+
 
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
@@ -58,7 +52,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.8.2"
+APP_VERSION = "v1.8.3"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -96,6 +90,8 @@ _model_ready = threading.Event()
 
 def load_ai_model():
     global model
+    if model is not None and _model_ready.is_set():
+        return True
     try:
         logging.info(f"Loading TripoSR on {current_device}…")
         model = TSR.from_pretrained(
@@ -107,8 +103,10 @@ def load_ai_model():
         model.to(current_device)
         _model_ready.set()
         logging.info("Model loaded ✓")
+        return True
     except Exception as e:
         logging.error(f"Model load failed: {e}")
+        return False
 
 def load_config():
     cfg = {
@@ -188,10 +186,8 @@ class AppApi:
                     self.last_glb = glb
                     self.last_obj = obj if os.path.exists(obj) else ""
                     self.last_folder = d
-                    with open(glb, "rb") as f:
-                        b64 = base64.b64encode(f.read()).decode()
                     return {
-                        "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                        "has_model": True,
                         "folder": d,
                         "glb_path": glb,
                         "obj_path": self.last_obj,
@@ -199,6 +195,22 @@ class AppApi:
         except Exception as e:
             logging.warning(f"Error finding latest model: {e}")
         return None
+
+    def load_latest_model(self):
+        if self.last_glb and os.path.exists(self.last_glb):
+            try:
+                with open(self.last_glb, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                return {
+                    "success": True,
+                    "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                    "folder": self.last_folder,
+                    "glb_path": self.last_glb,
+                    "obj_path": self.last_obj,
+                }
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Chưa có mô hình nào được tạo."}
 
     def get_init_data(self):
         latest = self._find_latest_model()
@@ -357,11 +369,11 @@ class AppApi:
                 return {"success": False, "error": f"Lỗi tạo 3D từ văn bản img2threejs: {e}"}
 
         # Ensure AI model is ready on GPU
-        if not _model_ready.is_set():
-            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050 (~vài giây)…", 5, task_id=task_id)
-            _model_ready.wait(timeout=30)
-            if not _model_ready.is_set():
-                return {"success": False, "error": "Model AI vẫn đang nạp vào card GPU. Vui lòng thử lại sau vài giây!"}
+        if model is None or not _model_ready.is_set():
+            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050 (~15s lần đầu)…", 5, task_id=task_id)
+            ok = load_ai_model()
+            if not ok or model is None:
+                return {"success": False, "error": "Model AI nạp thất bại. Vui lòng thử lại!"}
 
         try:
             # 1. Translate prompt to English for highest concept accuracy
@@ -427,11 +439,11 @@ class AppApi:
     # ── ENGINE 1: LOCAL GPU (RTX 3050 TAUBIN SMOOTHING + 1024 PBR ATLAS) ─────
     def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None, task_id=None):
         global model, current_device
-        if not _model_ready.is_set():
-            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050…", 5)
-            _model_ready.wait(timeout=30)
-            if not _model_ready.is_set():
-                return {"success": False, "error": "Model AI đang nạp vào RTX 3050. Vui lòng đợi vài giây!"}
+        if model is None or not _model_ready.is_set():
+            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050 (~15s lần đầu)…", 5, task_id=task_id)
+            ok = load_ai_model()
+            if not ok or model is None:
+                return {"success": False, "error": "Model AI nạp thất bại. Vui lòng kiểm tra dung lượng VRAM!"}
 
         try:
             do_bake = (quality == "pbr_1024" or quality == "bake")
@@ -1544,6 +1556,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
       <!-- Action Buttons -->
       <div class="tool-group">
+        <button class="btn-act ready" id="btnLoadLast" onclick="loadLastModel()" style="display:none;background:linear-gradient(135deg,#0284c7,#2563eb);color:#fff" title="Xem lại mô hình 3D vừa tạo trong phiên trước">
+          ↺ Xem mô hình trước
+        </button>
         <button class="btn-act ready" id="btnImport" onclick="importModel()" title="Nạp file 3D GLB/OBJ từ máy tính hoặc tải về từ web">
           📂 Nạp 3D ngoài
         </button>
@@ -1725,29 +1740,30 @@ window.addEventListener('pywebviewready', async () => {
   }
 
   _modelReady = d.model_ready;
-  if (!_modelReady) {
-    document.getElementById('banner').style.display = 'flex';
-    pollModel();
-  }
 
-  if (d.latest_model && d.latest_model.glb_data) {
+  if (d.latest_model && d.latest_model.has_model) {
     lastFolder = d.latest_model.folder;
+    const btnLast = document.getElementById('btnLoadLast');
+    if (btnLast) btnLast.style.display = 'inline-flex';
+    window._setProgress('⚡ Studio sẵn sàng! Chọn ảnh hoặc nhập văn bản để tạo mô hình 3D.', -1);
+  } else {
+    window._setProgress('⚡ Studio sẵn sàng! Chọn ảnh hoặc nhập văn bản để tạo mô hình 3D.', -1);
+  }
+});
+
+async function loadLastModel() {
+  window._setProgress('Đang nạp mô hình phiên trước…', 50);
+  const r = await window.pywebview.api.load_latest_model();
+  if (r && r.success) {
+    lastFolder = r.folder;
     const mv = document.getElementById('mv');
-    mv.src = d.latest_model.glb_data;
+    mv.src = r.glb_data;
     mv.style.display = 'block';
     document.getElementById('empty').style.display = 'none';
     document.getElementById('hint').style.display = 'block';
     window._setProgress('✨ Đã nạp mô hình 3D hoàn chỉnh. Sẵn sàng lưu GLB / OBJ!', 100);
-  }
-});
-
-async function pollModel() {
-  const ready = await window.pywebview.api.is_model_ready();
-  if (ready) {
-    _modelReady = true;
-    document.getElementById('banner').style.display = 'none';
   } else {
-    setTimeout(pollModel, 1200);
+    window._setProgress('❌ ' + (r.error || 'Không tìm thấy mô hình'), -1);
   }
 }
 
@@ -2049,8 +2065,6 @@ async function applyUpd() {
 
 
 def main():
-    threading.Thread(target=load_ai_model, daemon=True).start()
-
     api = AppApi()
     window = webview.create_window(
         title=f"AI 3D Studio {APP_VERSION}",

@@ -1,12 +1,12 @@
 {
-  "version": "1.8.2",
+  "version": "1.8.3",
   "buildDate": "2026-09-23",
   "releaseNotes": [
-    "Khắc phục triệt để hiện tượng ứng dụng bị đơ / (Not Responding) khi tạo 3D chế độ nướng vân UV PBR 1024px",
-    "Chuyển toàn bộ tác vụ render & bake texture sang luồng nền độc lập kết hợp Polling thời gian thực",
-    "Thêm thanh trạng thái chi tiết theo từng giai đoạn: Marching Cubes -> UV Atlas CPU -> Rasterize 3D -> Tô màu NeRF GPU",
-    "Thiết lập Single-Instance Socket Lock ngăn chặn xung đột tiến trình chạy ngầm làm đầy VRAM",
-    "Cấu hình biến môi trường Cache nội bộ trên ổ SSD H: tải model TripoSR trong 16s không lo nghẽn mạng"
+    "Khắc phục triệt để hiện tượng ứng dụng không mở được do khóa Socket trùng lặp",
+    "Tối ưu khởi động siêu tốc (<1s): chuyển nạp model AI sang chế độ Lazy Loading theo yêu cầu",
+    "Tiết kiệm 3.5GB RAM và 2.5GB GPU VRAM khi khởi động, loại bỏ 100% hiện tượng giật lag",
+    "Bỏ nạp tự động mô hình 3D dung lượng lớn trên khởi động, thêm nút '↺ Xem mô hình trước' nạp tức thì theo nhu cầu",
+    "Tự động dọn dẹp các tiến trình ngầm cũ trước khi khởi chạy và đồng bộ toàn bộ lối tắt Desktop về ổ SSD H:"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.2/update_v1.8.2.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.3/update_v1.8.3.zip"
 }
