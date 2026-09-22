@@ -1,12 +1,12 @@
 {
-  "version": "1.8.1",
+  "version": "1.8.2",
   "buildDate": "2026-09-23",
   "releaseNotes": [
-    "Khắc phục triệt để lỗi KeyError: 'storage' trên cổng Hugging Face ZeroGPU SpaceRuntime",
-    "Nâng cấp cơ chế kết nối client.submit bất đồng bộ, stream tiến trình trực tiếp theo thời gian thực",
-    "Tăng thời gian timeout lên 300s bảo đảm không bị đứt kết nối khi ZeroGPU đang xử lý",
-    "Tự động xuất song song cả GLB và OBJ tương thích hoàn hảo Blender, Unity và Three.js",
-    "Đã kiểm thử tạo thành công 100% mô hình 3D thực tế trên engine img2threejs"
+    "Khắc phục triệt để hiện tượng ứng dụng bị đơ / (Not Responding) khi tạo 3D chế độ nướng vân UV PBR 1024px",
+    "Chuyển toàn bộ tác vụ render & bake texture sang luồng nền độc lập kết hợp Polling thời gian thực",
+    "Thêm thanh trạng thái chi tiết theo từng giai đoạn: Marching Cubes -> UV Atlas CPU -> Rasterize 3D -> Tô màu NeRF GPU",
+    "Thiết lập Single-Instance Socket Lock ngăn chặn xung đột tiến trình chạy ngầm làm đầy VRAM",
+    "Cấu hình biến môi trường Cache nội bộ trên ổ SSD H: tải model TripoSR trong 16s không lo nghẽn mạng"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.1/update_v1.8.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.2/update_v1.8.2.zip"
 }

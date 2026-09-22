@@ -10,6 +10,23 @@ import shutil
 import urllib.request
 import urllib.parse
 import urllib.error
+import socket
+
+# Ensure portable cache paths on SSD H: are ALWAYS set FIRST before importing torch/TSR!
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(APP_DIR, ".cache")
+os.environ["HF_HOME"] = os.path.join(CACHE_DIR, "huggingface")
+os.environ["TORCH_HOME"] = os.path.join(CACHE_DIR, "torch")
+os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
+
+# Single instance lock: prevent duplicate background processes from exhausting RTX 3050 VRAM
+_instance_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _instance_socket.bind(('127.0.0.1', 49199))
+except socket.error:
+    logging.warning("AI 3D Studio already running. Exiting duplicate instance.")
+    sys.exit(0)
+
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 import torch
@@ -41,7 +58,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.8.1"
+APP_VERSION = "v1.8.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -152,6 +169,7 @@ class AppApi:
         self.last_obj = ""
         self.last_folder = OUTPUT_DIR
         self.config = load_config()
+        self._tasks = {}
 
     def set_window(self, w):
         self._window = w
@@ -215,10 +233,76 @@ class AppApi:
         return _model_ready.is_set()
 
     # ── live progress helper (SAFE JSON ESCAPING) ─────────────────────────────
-    def _progress(self, msg: str, pct: int = -1):
+    def _progress(self, msg: str, pct: int = -1, task_id: str = None):
+        if task_id and task_id in self._tasks:
+            self._tasks[task_id]["msg"] = msg
+            if pct >= 0:
+                self._tasks[task_id]["pct"] = pct
+        else:
+            for tid, t in self._tasks.items():
+                if t.get("status") == "running":
+                    t["msg"] = msg
+                    if pct >= 0:
+                        t["pct"] = pct
         if self._window:
-            safe = json.dumps(msg)
-            self._window.evaluate_js(f"window._setProgress({safe}, {pct});")
+            try:
+                safe = json.dumps(msg)
+                self._window.evaluate_js(f"window._setProgress({safe}, {pct});")
+            except Exception:
+                pass
+
+    # ── Async non-blocking task runner ───────────────────────────────────────
+    def start_generate_3d(self, file_path, engine="local",
+                          mc_resolution=None, bake_tex=False,
+                          smooth=True, quality="pbr_1024"):
+        task_id = str(time.time_ns())
+        self._tasks[task_id] = {
+            "status": "running", "msg": "Đang khởi động tiến trình…",
+            "pct": 5, "result": None, "error": None
+        }
+
+        def _worker():
+            try:
+                res = self.generate_3d(
+                    file_path, engine=engine, mc_resolution=mc_resolution,
+                    bake_tex=bake_tex, smooth=smooth, quality=quality, task_id=task_id
+                )
+                if res.get("success"):
+                    self._tasks[task_id] = {"status": "done", "msg": "Hoàn tất!", "pct": 100, "result": res}
+                else:
+                    self._tasks[task_id] = {"status": "error", "error": res.get("error", "Lỗi không xác định")}
+            except Exception as e:
+                logging.exception(f"task worker error: {e}")
+                self._tasks[task_id] = {"status": "error", "error": str(e)}
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return {"task_id": task_id}
+
+    def start_generate_from_text(self, prompt, quality="pbr_1024", smooth=True, engine="local"):
+        task_id = str(time.time_ns())
+        self._tasks[task_id] = {
+            "status": "running", "msg": "Đang phân tích câu lệnh…",
+            "pct": 5, "result": None, "error": None
+        }
+
+        def _worker():
+            try:
+                res = self.generate_from_text(
+                    prompt, quality=quality, smooth=smooth, engine=engine, task_id=task_id
+                )
+                if res.get("success"):
+                    self._tasks[task_id] = {"status": "done", "msg": "Hoàn tất!", "pct": 100, "result": res}
+                else:
+                    self._tasks[task_id] = {"status": "error", "error": res.get("error", "Lỗi không xác định")}
+            except Exception as e:
+                logging.exception(f"text task worker error: {e}")
+                self._tasks[task_id] = {"status": "error", "error": str(e)}
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return {"task_id": task_id}
+
+    def poll_task(self, task_id):
+        return self._tasks.get(task_id, {"status": "not_found"})
 
     # ── image preprocessing ──────────────────────────────────────────────────
     def _preprocess(self, file_path: str) -> Image.Image:
@@ -235,7 +319,7 @@ class AppApi:
         return Image.fromarray((arr * 255).astype(np.uint8))
 
     # ── TEXT TO 3D PIPELINE ──────────────────────────────────────────────────
-    def generate_from_text(self, prompt: str, quality="pbr_1024", smooth=True, engine="local"):
+    def generate_from_text(self, prompt: str, quality="pbr_1024", smooth=True, engine="local", task_id=None):
         prompt = prompt.strip()
         if not prompt:
             return {"success": False, "error": "Vui lòng nhập mô tả văn bản cần tạo 3D!"}
@@ -244,9 +328,9 @@ class AppApi:
             return self._gen_meshy(prompt=prompt)
         elif engine == "img2threejs":
             try:
-                self._progress(f"🌐 Đang dịch & tối ưu câu lệnh: '{prompt}'…", 8)
+                self._progress(f"🌐 Đang dịch & tối ưu câu lệnh: '{prompt}'…", 8, task_id=task_id)
                 prompt_en = translate_to_en(prompt)
-                self._progress(f"🎨 AI đang phác họa hình ảnh 2D từ ý tưởng ('{prompt_en}')…", 15)
+                self._progress(f"🎨 AI đang phác họa hình ảnh 2D từ ý tưởng ('{prompt_en}')…", 15, task_id=task_id)
                 ts = int(time.time())
                 item_dir = os.path.join(OUTPUT_DIR, f"txt_img2three_{ts}")
                 os.makedirs(item_dir, exist_ok=True)
@@ -274,18 +358,18 @@ class AppApi:
 
         # Ensure AI model is ready on GPU
         if not _model_ready.is_set():
-            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050 (~vài giây)…", 5)
+            self._progress("⏳ Đang nạp model AI vào GPU RTX 3050 (~vài giây)…", 5, task_id=task_id)
             _model_ready.wait(timeout=30)
             if not _model_ready.is_set():
                 return {"success": False, "error": "Model AI vẫn đang nạp vào card GPU. Vui lòng thử lại sau vài giây!"}
 
         try:
             # 1. Translate prompt to English for highest concept accuracy
-            self._progress(f"🌐 Đang dịch & tối ưu câu lệnh: '{prompt}'…", 8)
+            self._progress(f"🌐 Đang dịch & tối ưu câu lệnh: '{prompt}'…", 8, task_id=task_id)
             prompt_en = translate_to_en(prompt)
 
             # 2. Fetch studio-grade 2D concept image
-            self._progress(f"🎨 AI đang phác họa hình ảnh 2D từ ý tưởng ('{prompt_en}')…", 15)
+            self._progress(f"🎨 AI đang phác họa hình ảnh 2D từ ý tưởng ('{prompt_en}')…", 15, task_id=task_id)
             ts = int(time.time())
             item_dir = os.path.join(OUTPUT_DIR, f"txt_{ts}")
             os.makedirs(item_dir, exist_ok=True)
@@ -309,12 +393,13 @@ class AppApi:
                 self._window.evaluate_js(f"window._showConcept({safe_url});")
 
             # 3. Feed directly into RTX 3050 3D reconstruction!
-            self._progress("⚡ Đưa hình phác họa vào GPU RTX 3050 tái tạo 3D…", 28)
+            self._progress("⚡ Đưa hình phác họa vào GPU RTX 3050 tái tạo 3D…", 28, task_id=task_id)
             res = self._gen_local(
                 concept_file,
                 quality=quality,
                 smooth=smooth,
-                target_dir=item_dir
+                target_dir=item_dir,
+                task_id=task_id
             )
             if res.get("success"):
                 res["concept_data"] = concept_data_url
@@ -328,7 +413,7 @@ class AppApi:
     # ── main 3D generation router ────────────────────────────────────────────
     def generate_3d(self, file_path, engine="local",
                     mc_resolution=None, bake_tex=False,
-                    smooth=True, quality="pbr_1024"):
+                    smooth=True, quality="pbr_1024", task_id=None):
         if engine == "meshy":
             return self._gen_meshy(file_path=file_path)
         elif engine == "tripo":
@@ -337,10 +422,10 @@ class AppApi:
             return self._gen_img2threejs(file_path)
         elif engine == "cloud":
             return self._gen_cloud(file_path, quality)
-        return self._gen_local(file_path, quality=quality, smooth=smooth)
+        return self._gen_local(file_path, quality=quality, smooth=smooth, task_id=task_id)
 
     # ── ENGINE 1: LOCAL GPU (RTX 3050 TAUBIN SMOOTHING + 1024 PBR ATLAS) ─────
-    def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None):
+    def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None, task_id=None):
         global model, current_device
         if not _model_ready.is_set():
             self._progress("⏳ Đang nạp model AI vào GPU RTX 3050…", 5)
@@ -399,7 +484,10 @@ class AppApi:
                 import xatlas
 
                 # Bake in canonical coordinates to guarantee 100% texture alignment
-                bake = _bake(meshes[0], model, scene_codes[0], 1024)
+                bake = _bake(
+                    meshes[0], model, scene_codes[0], 1024,
+                    progress_cb=lambda m, p: self._progress(m, p, task_id=task_id)
+                )
 
                 # Center pivot for Unity & Blender export AFTER baking
                 centroid = meshes[0].bounding_box.centroid.copy()
@@ -1720,7 +1808,7 @@ async function pickImage() {
   }
 }
 
-/* ── generate ── */
+/* ── generate (Non-blocking async task with 400ms polling) ── */
 async function generate() {
   const quality = curMode === 'local'
     ? document.getElementById('quality').value
@@ -1742,45 +1830,80 @@ async function generate() {
     }
   }
 
-  document.getElementById('btnGen').disabled = true;
-  document.getElementById('spin').style.display = 'inline-block';
-  document.getElementById('barWrap').style.display = 'block';
-  document.getElementById('bar').style.width = '2%';
+  const btn = document.getElementById('btnGen');
+  const spin = document.getElementById('spin');
+  const barWrap = document.getElementById('barWrap');
+  const bar = document.getElementById('bar');
+
+  btn.disabled = true;
+  spin.style.display = 'inline-block';
+  barWrap.style.display = 'block';
+  bar.style.width = '2%';
   window._setProgress('Đang khởi động tiến trình xử lý…', 5);
 
+  function finishRun() {
+    btn.disabled = false;
+    spin.style.display = 'none';
+  }
+
   try {
-    let r;
-    if (curSource === 'text') {
-      const prompt = document.getElementById('promptInput').value.trim();
-      r = await window.pywebview.api.generate_from_text(prompt, quality, smooth, curMode);
-    } else {
-      r = await window.pywebview.api.generate_3d(
-        imgPath, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality
-      );
+    const prompt = (curSource === 'text') ? document.getElementById('promptInput').value.trim() : '';
+    const startRes = (curSource === 'text')
+      ? await window.pywebview.api.start_generate_from_text(prompt, quality, smooth, curMode)
+      : await window.pywebview.api.start_generate_3d(imgPath, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality);
+
+    if (!startRes || !startRes.task_id) {
+      window._setProgress('❌ Không thể khởi tạo tác vụ: ' + (startRes && startRes.error ? startRes.error : 'Lỗi không xác định'), -1);
+      finishRun();
+      return;
     }
 
-    if (r && r.success) {
-      lastFolder = r.folder;
-      const mv = document.getElementById('mv');
-      mv.src = r.glb_data;
-      mv.style.display = 'block';
-      document.getElementById('empty').style.display = 'none';
-      document.getElementById('hint').style.display = 'block';
-      document.getElementById('barWrap').style.display = 'block';
-      document.getElementById('bar').style.width = '100%';
-      window._setProgress('✅ Thành công! (' + r.engine_used + ') – Sẵn sàng lưu file!', 100);
-      if (r.concept_data) {
-        document.getElementById('conceptTxt').textContent = '✅ Đã hoàn tất mô hình 3D!';
+    const taskId = startRes.task_id;
+    const pollInterval = setInterval(async () => {
+      try {
+        const task = await window.pywebview.api.poll_task(taskId);
+        if (!task || task.status === 'not_found') {
+          return;
+        }
+        if (task.status === 'running') {
+          if (task.msg) {
+            window._setProgress(task.msg, (task.pct !== undefined && task.pct >= 0) ? task.pct : -1);
+          }
+        } else if (task.status === 'done') {
+          clearInterval(pollInterval);
+          const r = task.result;
+          if (r && r.success) {
+            lastFolder = r.folder;
+            const mv = document.getElementById('mv');
+            mv.src = r.glb_data;
+            mv.style.display = 'block';
+            document.getElementById('empty').style.display = 'none';
+            document.getElementById('hint').style.display = 'block';
+            barWrap.style.display = 'block';
+            bar.style.width = '100%';
+            window._setProgress('✅ Thành công! (' + r.engine_used + ') – Sẵn sàng lưu file!', 100);
+            if (r.concept_data) {
+              document.getElementById('conceptTxt').textContent = '✅ Đã hoàn tất mô hình 3D!';
+            }
+          } else {
+            window._setProgress('❌ ' + ((r && r.error) ? r.error : 'Lỗi không xác định'), -1);
+            bar.style.width = '0%';
+          }
+          finishRun();
+        } else if (task.status === 'error') {
+          clearInterval(pollInterval);
+          window._setProgress('❌ ' + (task.error || 'Lỗi không xác định'), -1);
+          bar.style.width = '0%';
+          finishRun();
+        }
+      } catch (pollErr) {
+        console.warn('Poll error:', pollErr);
       }
-    } else if (r && r.error) {
-      window._setProgress('❌ ' + r.error, -1);
-      document.getElementById('bar').style.width = '0%';
-    }
+    }, 400);
+
   } catch(e) {
     window._setProgress('❌ Lỗi ngoại lệ: ' + e, -1);
-  } finally {
-    document.getElementById('btnGen').disabled = false;
-    document.getElementById('spin').style.display = 'none';
+    finishRun();
   }
 }
 
