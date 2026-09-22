@@ -1,12 +1,12 @@
 {
-  "version": "1.8.0",
-  "buildDate": "2026-09-22",
+  "version": "1.8.1",
+  "buildDate": "2026-09-23",
   "releaseNotes": [
-    "Tích hợp công nghệ tiên tiến img2threejs & TRELLIS AI Studio vào tab thứ 5 riêng biệt",
-    "Hỗ trợ tái tạo 3D chuẩn xác cao (PBR GLB + OBJ) thông qua pipeline TRELLIS Mesh3D Space",
-    "Thư viện Showcase img2threejs: Trực tiếp khám phá các mẫu 3D nổi tiếng (Talon Knife Ruby, AWP Medusa, Pikachu, Doraemon House...)",
-    "Hỗ trợ tạo mô hình cả từ Hình ảnh (Image-to-3D) lẫn Văn bản (Text-to-3D) với engine img2threejs",
-    "Chuyển toàn bộ ứng dụng sang ổ SSD H: tăng tốc độ đọc ghi, giải phóng dung lượng ổ C: an toàn tuyệt đối"
+    "Khắc phục triệt để lỗi KeyError: 'storage' trên cổng Hugging Face ZeroGPU SpaceRuntime",
+    "Nâng cấp cơ chế kết nối client.submit bất đồng bộ, stream tiến trình trực tiếp theo thời gian thực",
+    "Tăng thời gian timeout lên 300s bảo đảm không bị đứt kết nối khi ZeroGPU đang xử lý",
+    "Tự động xuất song song cả GLB và OBJ tương thích hoàn hảo Blender, Unity và Three.js",
+    "Đã kiểm thử tạo thành công 100% mô hình 3D thực tế trên engine img2threejs"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.0/update_v1.8.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.1/update_v1.8.1.zip"
 }

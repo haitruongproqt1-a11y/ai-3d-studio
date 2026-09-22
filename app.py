@@ -24,9 +24,24 @@ import trimesh
 import cv2
 import rembg
 
+# Monkeypatch huggingface_hub SpaceRuntime to safely handle ZeroGPU spaces
+try:
+    import huggingface_hub._space_api as _space_api
+    def _safe_space_init(self, data):
+        self.stage = data.get("stage")
+        hw = data.get("hardware") or {}
+        self.hardware = hw.get("current") if isinstance(hw, dict) else None
+        self.requested_hardware = hw.get("requested") if isinstance(hw, dict) else None
+        self.sleep_time = data.get("gcTimeout")
+        self.storage = data.get("storage")
+        self.raw = data
+    _space_api.SpaceRuntime.__init__ = _safe_space_init
+except Exception:
+    pass
+
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.8.0"
+APP_VERSION = "v1.8.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -787,6 +802,21 @@ class AppApi:
     # ── ENGINE 5: IMG2THREEJS (TRELLIS 3D RECONSTRUCTION + THREE.JS PIPELINE) ─
     def _gen_img2threejs(self, file_path, target_dir=None):
         try:
+            # Safe monkeypatch to prevent KeyError: 'storage' with ZeroGPU SpaceRuntime
+            try:
+                import huggingface_hub._space_api as space_api
+                def _safe_space_init(self, data):
+                    self.stage = data.get("stage")
+                    hw = data.get("hardware") or {}
+                    self.hardware = hw.get("current") if isinstance(hw, dict) else None
+                    self.requested_hardware = hw.get("requested") if isinstance(hw, dict) else None
+                    self.sleep_time = data.get("gcTimeout")
+                    self.storage = data.get("storage")
+                    self.raw = data
+                space_api.SpaceRuntime.__init__ = _safe_space_init
+            except Exception:
+                pass
+
             from gradio_client import Client, handle_file
         except ImportError:
             return {"success": False, "error": "Thiếu thư viện gradio_client. Vui lòng dùng chế độ GPU Offline!"}
@@ -794,17 +824,17 @@ class AppApi:
         try:
             hf_token = self.config.get("hf_token", "").strip() or None
             self._progress("🎨 [img2threejs] Đang kết nối máy chủ TRELLIS Space…", 10)
-            client = Client("trellis-community/TRELLIS", token=hf_token, verbose=False)
+            client = Client("trellis-community/TRELLIS", token=hf_token, httpx_kwargs={"timeout": 300.0}, verbose=False)
 
-            self._progress("🔄 [img2threejs] Khởi tạo phiên làm việc scratch session…", 20)
+            self._progress("🔄 [img2threejs] Khởi tạo phiên làm việc scratch session…", 18)
             try:
                 client.predict(api_name="/start_session")
             except Exception as se:
                 logging.warning(f"img2threejs start_session notice: {se}")
 
-            self._progress("🧠 [img2threejs] Đang giải mã cấu trúc 3D & tái tạo Mesh…", 40)
+            self._progress("🧠 [img2threejs] Khởi chạy tái tạo không gian 3D trên ZeroGPU…", 25)
             primary = handle_file(file_path)
-            result = client.predict(
+            job = client.submit(
                 image=primary,
                 multiimages=[],
                 seed=0,
@@ -818,23 +848,43 @@ class AppApi:
                 api_name="/generate_and_extract_glb",
             )
 
+            poll_count = 0
+            while not job.done():
+                time.sleep(2)
+                poll_count += 1
+                try:
+                    st = job.status()
+                    code_str = str(st.code) if hasattr(st, "code") else ""
+                    if "STARTING" in code_str:
+                        self._progress("⏳ [img2threejs] Đang chờ cấp phát GPU Cloud…", 28)
+                    elif "PROCESSING" in code_str:
+                        prog_val = min(35 + poll_count * 2, 85)
+                        self._progress(f"✨ [img2threejs] ZeroGPU đang tái tạo cấu trúc Mesh 3D ({prog_val}%)…", prog_val)
+                    elif "FINISHED" in code_str:
+                        self._progress("📥 [img2threejs] Đang nạp tệp mô hình 3D về máy tính…", 90)
+                except Exception:
+                    pass
+
+            result = job.result()
+
             glb_source = None
             if isinstance(result, (list, tuple)):
                 for item in result:
-                    cand = item.get("video") if isinstance(item, dict) else item
-                    if isinstance(cand, str) and cand.lower().endswith(".glb") and os.path.exists(cand):
-                        glb_source = cand
-                        break
                     if isinstance(item, str) and item.lower().endswith(".glb") and os.path.exists(item):
                         glb_source = item
                         break
-            elif isinstance(result, str) and result.lower().endswith(".glb"):
+                    elif isinstance(item, dict):
+                        cand = item.get("video")
+                        if isinstance(cand, str) and cand.lower().endswith(".glb") and os.path.exists(cand):
+                            glb_source = cand
+                            break
+            elif isinstance(result, str) and result.lower().endswith(".glb") and os.path.exists(result):
                 glb_source = result
 
             if not glb_source or not os.path.exists(glb_source):
                 return {"success": False, "error": f"Không tìm thấy file GLB từ phản hồi TRELLIS: {result}"}
 
-            self._progress("📦 [img2threejs] Đang chuẩn bị tệp mô hình GLB và OBJ…", 80)
+            self._progress("📦 [img2threejs] Đang chuẩn bị tệp mô hình GLB và OBJ…", 92)
             if target_dir:
                 item_dir = target_dir
             else:
@@ -883,7 +933,9 @@ class AppApi:
         except Exception as e:
             logging.exception("_gen_img2threejs error")
             msg = str(e)
-            if "quota" in msg.lower() or "ZeroGPU" in msg or "429" in msg or "timed out" in msg.lower():
+            if "storage" in msg.lower():
+                msg = "⚠️ Phiên kết nối Hugging Face bị gián đoạn. Vui lòng bấm thử lại!"
+            elif "quota" in msg.lower() or "ZeroGPU" in msg or "429" in msg or "timed out" in msg.lower() or "timeout" in msg.lower():
                 msg = ("⚠️ Máy chủ TRELLIS AI đang bận hoặc quá tải lượt dùng.\n\n"
                        "👉 GIẢI PHÁP TỐT NHẤT:\n"
                        "1. Dùng tab '⚡ RTX 3050 (Offline)': Chạy 100% trên card máy tính của bạn, không cần mạng!\n"
