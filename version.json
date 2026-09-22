@@ -1,12 +1,12 @@
 {
-  "version": "1.7.0",
-  "buildDate": "2026-09-13",
+  "version": "1.8.0",
+  "buildDate": "2026-09-22",
   "releaseNotes": [
-    "Tích hợp Meshy AI Studio Pro: Tặng 200 credits miễn phí/tháng, chất lượng Game AAA với vân PBR đa lớp cực đẹp",
-    "Nâng cấp RTX 3050 Offline lên chế độ Đỉnh cao PBR 1024px + Làm mịn Taubin (khử bậc thang, giữ nguyên thể tích, không teo khối)",
-    "Khắc phục 100% Text-to-3D: Tự động dịch & tối ưu câu lệnh tiếng Việt, xem trước ảnh phác họa 2D trước khi chuyển thành 3D",
-    "Hỗ trợ đồng thời Text-to-3D và Image-to-3D trên cả GPU RTX 3050 và Meshy AI",
-    "An toàn tuyệt đối mã lệnh thanh tiến trình (JSON safe escaping), không bao giờ bị nghẽn JS"
+    "Tích hợp công nghệ tiên tiến img2threejs & TRELLIS AI Studio vào tab thứ 5 riêng biệt",
+    "Hỗ trợ tái tạo 3D chuẩn xác cao (PBR GLB + OBJ) thông qua pipeline TRELLIS Mesh3D Space",
+    "Thư viện Showcase img2threejs: Trực tiếp khám phá các mẫu 3D nổi tiếng (Talon Knife Ruby, AWP Medusa, Pikachu, Doraemon House...)",
+    "Hỗ trợ tạo mô hình cả từ Hình ảnh (Image-to-3D) lẫn Văn bản (Text-to-3D) với engine img2threejs",
+    "Chuyển toàn bộ ứng dụng sang ổ SSD H: tăng tốc độ đọc ghi, giải phóng dung lượng ổ C: an toàn tuyệt đối"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.7.0/update_v1.7.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.0/update_v1.8.0.zip"
 }

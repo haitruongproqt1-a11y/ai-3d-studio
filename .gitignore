@@ -9,3 +9,12 @@ __pycache__/
 update_temp.zip
 update_extracted/
 config.json
+.cache/
+*.png
+*.jpg
+*.jpeg
+*.glb
+*.obj
+img2threejs/
+diag_test.py
+full_api_test.py

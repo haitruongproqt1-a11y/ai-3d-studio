@@ -26,7 +26,7 @@ import rembg
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.7.0"
+APP_VERSION = "v1.8.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -227,6 +227,35 @@ class AppApi:
 
         if engine == "meshy":
             return self._gen_meshy(prompt=prompt)
+        elif engine == "img2threejs":
+            try:
+                self._progress(f"🌐 Đang dịch & tối ưu câu lệnh: '{prompt}'…", 8)
+                prompt_en = translate_to_en(prompt)
+                self._progress(f"🎨 AI đang phác họa hình ảnh 2D từ ý tưởng ('{prompt_en}')…", 15)
+                ts = int(time.time())
+                item_dir = os.path.join(OUTPUT_DIR, f"txt_img2three_{ts}")
+                os.makedirs(item_dir, exist_ok=True)
+                concept_file = os.path.join(item_dir, "concept.png")
+                clean_prompt = f"{prompt_en}, centered studio 3d object, full view, pure white background, hyperrealistic, sharp focus, 8k"
+                encoded_prompt = urllib.parse.quote(clean_prompt)
+                url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true&seed={ts % 10000}"
+                req = urllib.request.Request(url, headers={"User-Agent": "AI-3D-Studio/1.8.0"})
+                with urllib.request.urlopen(req, timeout=25) as r, open(concept_file, "wb") as f_img:
+                    shutil.copyfileobj(r, f_img)
+                with open(concept_file, "rb") as f_img:
+                    b64_img = base64.b64encode(f_img.read()).decode()
+                concept_data_url = f"data:image/png;base64,{b64_img}"
+                if self._window:
+                    safe_url = json.dumps(concept_data_url)
+                    self._window.evaluate_js(f"window._showConcept({safe_url});")
+                res = self._gen_img2threejs(concept_file, target_dir=item_dir)
+                if res.get("success"):
+                    res["concept_data"] = concept_data_url
+                    res["prompt"] = prompt
+                return res
+            except Exception as e:
+                logging.exception("generate_from_text img2threejs error")
+                return {"success": False, "error": f"Lỗi tạo 3D từ văn bản img2threejs: {e}"}
 
         # Ensure AI model is ready on GPU
         if not _model_ready.is_set():
@@ -289,6 +318,8 @@ class AppApi:
             return self._gen_meshy(file_path=file_path)
         elif engine == "tripo":
             return self._gen_tripo3d(file_path)
+        elif engine == "img2threejs":
+            return self._gen_img2threejs(file_path)
         elif engine == "cloud":
             return self._gen_cloud(file_path, quality)
         return self._gen_local(file_path, quality=quality, smooth=smooth)
@@ -753,6 +784,112 @@ class AppApi:
                        "👉 GIẢI PHÁP TỐT NHẤT: Chuyển sang thẻ '⚡ GPU RTX 3050' để tạo ngay trên máy bạn 100% offline, miễn phí vĩnh viễn!")
             return {"success": False, "error": msg}
 
+    # ── ENGINE 5: IMG2THREEJS (TRELLIS 3D RECONSTRUCTION + THREE.JS PIPELINE) ─
+    def _gen_img2threejs(self, file_path, target_dir=None):
+        try:
+            from gradio_client import Client, handle_file
+        except ImportError:
+            return {"success": False, "error": "Thiếu thư viện gradio_client. Vui lòng dùng chế độ GPU Offline!"}
+
+        try:
+            hf_token = self.config.get("hf_token", "").strip() or None
+            self._progress("🎨 [img2threejs] Đang kết nối máy chủ TRELLIS Space…", 10)
+            client = Client("trellis-community/TRELLIS", token=hf_token, verbose=False)
+
+            self._progress("🔄 [img2threejs] Khởi tạo phiên làm việc scratch session…", 20)
+            try:
+                client.predict(api_name="/start_session")
+            except Exception as se:
+                logging.warning(f"img2threejs start_session notice: {se}")
+
+            self._progress("🧠 [img2threejs] Đang giải mã cấu trúc 3D & tái tạo Mesh…", 40)
+            primary = handle_file(file_path)
+            result = client.predict(
+                image=primary,
+                multiimages=[],
+                seed=0,
+                ss_guidance_strength=7.5,
+                ss_sampling_steps=12,
+                slat_guidance_strength=3.0,
+                slat_sampling_steps=12,
+                multiimage_algo="stochastic",
+                mesh_simplify=0.95,
+                texture_size=1024,
+                api_name="/generate_and_extract_glb",
+            )
+
+            glb_source = None
+            if isinstance(result, (list, tuple)):
+                for item in result:
+                    cand = item.get("video") if isinstance(item, dict) else item
+                    if isinstance(cand, str) and cand.lower().endswith(".glb") and os.path.exists(cand):
+                        glb_source = cand
+                        break
+                    if isinstance(item, str) and item.lower().endswith(".glb") and os.path.exists(item):
+                        glb_source = item
+                        break
+            elif isinstance(result, str) and result.lower().endswith(".glb"):
+                glb_source = result
+
+            if not glb_source or not os.path.exists(glb_source):
+                return {"success": False, "error": f"Không tìm thấy file GLB từ phản hồi TRELLIS: {result}"}
+
+            self._progress("📦 [img2threejs] Đang chuẩn bị tệp mô hình GLB và OBJ…", 80)
+            if target_dir:
+                item_dir = target_dir
+            else:
+                ts = int(time.time())
+                item_dir = os.path.join(OUTPUT_DIR, f"img2three_{ts}")
+                os.makedirs(item_dir, exist_ok=True)
+
+            local_glb = os.path.join(item_dir, "model.glb")
+            local_obj = os.path.join(item_dir, "model.obj")
+            shutil.copy2(glb_source, local_glb)
+
+            # Export clean triangulated smooth-normal OBJ via trimesh
+            try:
+                scene_or_mesh = trimesh.load(local_glb, force="scene")
+                mesh = scene_or_mesh.to_mesh() if hasattr(scene_or_mesh, "to_mesh") else scene_or_mesh
+                if hasattr(mesh, "merge_vertices"):
+                    mesh.merge_vertices()
+                if hasattr(mesh, "fix_normals"):
+                    mesh.fix_normals()
+                mesh.export(local_obj)
+            except Exception as oe:
+                logging.warning(f"OBJ export notice: {oe}")
+                if not os.path.exists(local_obj):
+                    try:
+                        trimesh.load(local_glb).export(local_obj)
+                    except Exception:
+                        pass
+
+            self.last_glb = local_glb
+            self.last_obj = local_obj if os.path.exists(local_obj) else local_glb
+            self.last_folder = item_dir
+
+            self._progress("✅ Hoàn tất! Đang nạp mô hình img2threejs vào Studio…", 98)
+            with open(local_glb, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": local_glb,
+                "obj_path": self.last_obj,
+                "folder": item_dir,
+                "engine_used": "img2threejs (TRELLIS & Code Reconstruction)",
+            }
+
+        except Exception as e:
+            logging.exception("_gen_img2threejs error")
+            msg = str(e)
+            if "quota" in msg.lower() or "ZeroGPU" in msg or "429" in msg or "timed out" in msg.lower():
+                msg = ("⚠️ Máy chủ TRELLIS AI đang bận hoặc quá tải lượt dùng.\n\n"
+                       "👉 GIẢI PHÁP TỐT NHẤT:\n"
+                       "1. Dùng tab '⚡ RTX 3050 (Offline)': Chạy 100% trên card máy tính của bạn, không cần mạng!\n"
+                       "2. Dán Hugging Face Token vào '⚙️ Cài đặt' để có hạn ngạch ưu tiên cao hơn!")
+            return {"success": False, "error": msg}
+
     # ── settings ─────────────────────────────────────────────────────────────
     def save_settings(self, hf_token=None, tripo_api_key=None, meshy_api_key=None):
         if hf_token is not None:
@@ -765,6 +902,10 @@ class AppApi:
         return {"success": True}
 
     # ── file operations (ALWAYS ACCESSIBLE) ───────────────────────────────────
+    def open_img2threejs_dir(self):
+        p = os.path.join(APP_DIR, "img2threejs")
+        return self.open_folder(p)
+
     def open_folder(self, folder=None):
         target = folder or self.last_folder or OUTPUT_DIR
         if not os.path.exists(target):
@@ -950,7 +1091,7 @@ HTML = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>AI 3D Studio – RTX 3050 & Meshy AAA</title>
+<title>AI 3D Studio – RTX 3050 & img2threejs & Meshy AAA</title>
 <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
@@ -979,10 +1120,11 @@ header{height:52px;background:#131722;border-bottom:1px solid #232936;display:fl
 .src-tab{flex:1;padding:8px;border:none;border-radius:7px;background:transparent;color:#94a3b8;font-size:11.5px;font-weight:700;cursor:pointer;transition:.18s;display:flex;align-items:center;justify-content:center;gap:5px}
 .src-tab.active{background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.4)}
 
-/* ── 4 Engine tabs ── */
-.tabs{display:grid;grid-template-columns:repeat(2, 1fr);background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
+/* ── 5 Engine tabs ── */
+.tabs{display:grid;grid-template-columns:repeat(auto-fit, minmax(105px, 1fr));background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
 .tab{padding:6px 4px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
 .tab.on{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.35)}
+.tab.img2three.on{background:linear-gradient(135deg,#0284c7,#10b981);color:#fff;box-shadow:0 2px 8px rgba(2,132,199,.4)}
 .tab.meshy.on{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;box-shadow:0 2px 8px rgba(219,39,119,.4)}
 .tab.tripo.on{background:linear-gradient(135deg,#e11d48,#7c3aed);box-shadow:0 2px 10px rgba(225,29,72,.4)}
 .tab.cloud.on{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 2px 8px rgba(16,185,129,.35)}
@@ -1023,6 +1165,7 @@ select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f
 
 /* ── Generate button ── */
 .btn-gen{background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:#fff;border:none;padding:12px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 4px 14px rgba(37,99,235,.3);transition:.2s}
+.btn-gen.img2three-mode{background:linear-gradient(135deg,#0284c7,#10b981);box-shadow:0 4px 14px rgba(2,132,199,.35)}
 .btn-gen.meshy-mode{background:linear-gradient(135deg,#7c3aed,#db2777);box-shadow:0 4px 14px rgba(219,39,119,.35)}
 .btn-gen.tripo-mode{background:linear-gradient(135deg,#e11d48,#7c3aed);box-shadow:0 4px 14px rgba(225,29,72,.35)}
 .btn-gen.cloud-mode{background:linear-gradient(135deg,#059669,#2563eb);box-shadow:0 4px 14px rgba(16,185,129,.3)}
@@ -1102,12 +1245,13 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <button class="src-tab" id="srcTabTxt" onclick="switchSource('text')">✍️ Từ Văn Bản</button>
     </div>
 
-    <!-- 4 Engine tabs -->
+    <!-- 5 Engine tabs -->
     <div class="tabs">
-      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ RTX 3050 (Offline)</button>
-      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')">💎 Meshy AI (Game AAA)</button>
-      <button class="tab tripo" id="tabTripo" onclick="setMode('tripo')">🚀 Tripo3D Studio</button>
-      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">🌐 Hybrid Cloud</button>
+      <button class="tab on" id="tabLocal" onclick="setMode('local')">⚡ RTX 3050</button>
+      <button class="tab img2three" id="tabImg2Three" onclick="setMode('img2threejs')">🎨 img2threejs</button>
+      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')">💎 Meshy AAA</button>
+      <button class="tab tripo" id="tabTripo" onclick="setMode('tripo')">🚀 Tripo3D</button>
+      <button class="tab cloud" id="tabCloud" onclick="setMode('cloud')">🌐 Hybrid</button>
     </div>
 
     <!-- Not-ready banner -->
@@ -1166,6 +1310,32 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <div class="chk-row" style="margin-bottom:6px">
         <input type="checkbox" id="chkSmooth" checked>
         <label class="chk-row" for="chkSmooth">✨ Làm mịn Taubin (giữ nguyên khối lượng, khử phẳng sọc)</label>
+      </div>
+    </div>
+
+    <!-- img2threejs settings & showcase gallery -->
+    <div id="img2threeSet" style="display:none">
+      <div style="background:rgba(2,132,199,.15);border:1px solid rgba(2,132,199,.35);border-radius:8px;padding:8px 10px;font-size:11px;color:#38bdf8;line-height:1.4;margin-bottom:6px">
+        🎨 <b>img2threejs (Reconstruction-by-Code + TRELLIS AI):</b><br>
+        Tái tạo mô hình 3D chuẩn xác cao (PBR GLB + OBJ) tối ưu hóa cho Three.js, Blender và Unity.
+      </div>
+      <div style="background:#131824;border:1px solid #1e2536;border-radius:8px;padding:8px 10px;font-size:10.5px;color:#cbd5e1;line-height:1.5">
+        🌟 <b>MÔ HÌNH NỔI TIẾNG (IMG2THREEJS SHOWCASE):</b><br>
+        <span style="color:#94a3b8">Bấm để mở xem trực tiếp mô hình mẫu 3D trên trình duyệt:</span>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+          <button class="tag-btn" onclick="openDemo('talon-doppler-ruby')">🔪 Dao Talon Ruby</button>
+          <button class="tag-btn" onclick="openDemo('awp-medusa-v2')">🔫 Súng AWP Medusa</button>
+          <button class="tag-btn" onclick="openDemo('electric-mouse-mascot')">⚡ Pikachu Mascot</button>
+          <button class="tag-btn" onclick="openDemo('doraemon-house')">🏠 Nhà Doraemon</button>
+          <button class="tag-btn" onclick="openDemo('sony-wf1000xm3')">🎧 Tai nghe Sony WF</button>
+          <button class="tag-btn" onclick="openDemo('crown-chest')">👑 Rương Hoàng Gia</button>
+          <button class="tag-btn" onclick="openDemo('glock-ghost-protocol')">🔫 Súng Glock Ghost</button>
+          <button class="tag-btn" onclick="openDemo('bmx-endurance')">🚲 Xe đạp BMX</button>
+        </div>
+        <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+          <a href="javascript:void(0)" onclick="openDemoGallery()" style="color:#38bdf8;font-weight:700;text-decoration:underline">🌐 Mở img2threejs.io Gallery</a>
+          <button class="tag-btn" onclick="openImg2ThreeCode()" style="color:#34d399">📁 Mã nguồn cục bộ</button>
+        </div>
       </div>
     </div>
 
@@ -1381,6 +1551,9 @@ function updateGenBtnText() {
   if (curMode === 'local') {
     btn.className = 'btn-gen';
     btn.textContent = curSource === 'image' ? '⚡ BẮT ĐẦU TẠO 3D (RTX 3050 OFFLINE)' : '✍️ BẮT ĐẦU TẠO 3D TỪ VĂN BẢN (RTX 3050)';
+  } else if (curMode === 'img2threejs') {
+    btn.className = 'btn-gen img2three-mode';
+    btn.textContent = curSource === 'image' ? '🎨 TẠO 3D VỚI IMG2THREEJS (TRELLIS)' : '✍️ TẠO 3D TỪ VĂN BẢN (IMG2THREEJS)';
   } else if (curMode === 'meshy') {
     btn.className = 'btn-gen meshy-mode';
     btn.textContent = curSource === 'image' ? '💎 TẠO 3D GAME AAA (MESHY AI)' : '✍️ TẠO 3D TỪ CHỮ GAME AAA (MESHY AI)';
@@ -1441,16 +1614,26 @@ async function pollModel() {
 /* ── mode switcher ── */
 function setMode(m) {
   curMode = m;
-  ['tabLocal','tabMeshy','tabTripo','tabCloud'].forEach(id => {
-    document.getElementById(id).className = 'tab' + (id === 'tabMeshy' ? ' meshy' : (id === 'tabTripo' ? ' tripo' : (id === 'tabCloud' ? ' cloud' : '')));
+  ['tabLocal','tabImg2Three','tabMeshy','tabTripo','tabCloud'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = 'tab' + (id === 'tabImg2Three' ? ' img2three' : (id === 'tabMeshy' ? ' meshy' : (id === 'tabTripo' ? ' tripo' : (id === 'tabCloud' ? ' cloud' : ''))));
   });
-  ['localSet','meshySet','tripoSet','cloudSet'].forEach(id => document.getElementById(id).style.display = 'none');
+  ['localSet','img2threeSet','meshySet','tripoSet','cloudSet'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 
   if (m === 'local') {
     document.getElementById('tabLocal').classList.add('on');
     document.getElementById('localSet').style.display = '';
     document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (100% Offline)';
     document.getElementById('icDesc').innerHTML = 'Tạo 3D bằng card RTX 3050 máy bạn. <b>Không cần mạng, không hết lượt</b>, nướng vân UV 1024px mịn màng.';
+  } else if (m === 'img2threejs') {
+    document.getElementById('tabImg2Three').classList.add('on');
+    document.getElementById('img2threeSet').style.display = '';
+    document.getElementById('icTitle').textContent = '🎨 img2threejs – Tái tạo 3D bằng Code & TRELLIS';
+    document.getElementById('icDesc').innerHTML = 'Công nghệ tái tạo mô hình 3D cho Three.js, Blender và Unity từ hình ảnh hoặc ý tưởng văn bản.';
   } else if (m === 'meshy') {
     document.getElementById('tabMeshy').classList.add('on');
     document.getElementById('meshySet').style.display = '';
@@ -1620,6 +1803,18 @@ function openTripoWeb() {
 
 function openMeshyWeb() {
   window.pywebview.api.open_external_url('https://meshy.ai');
+}
+
+function openDemo(demoId) {
+  window.pywebview.api.open_external_url('https://img2threejs.io/#/demo/' + demoId);
+}
+
+function openDemoGallery() {
+  window.pywebview.api.open_external_url('https://img2threejs.io/');
+}
+
+function openImg2ThreeCode() {
+  window.pywebview.api.open_img2threejs_dir();
 }
 
 /* ── settings ── */
