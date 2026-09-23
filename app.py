@@ -878,6 +878,26 @@ class AppApi:
             if isinstance(mesh, list):
                 mesh = mesh[0]
 
+            # ── HD COLOR & TEXTURE PROJECTION ──
+            self._progress("🎨 AI đang đổ màu & ánh sáng gốc lên mô hình 3D…", 82, task_id=task_id)
+            try:
+                img_rgba = image.convert("RGBA")
+                img_w, img_h = img_rgba.size
+                img_np = np.array(img_rgba)
+                v = mesh.vertices.copy()
+                min_b = v.min(axis=0)
+                max_b = v.max(axis=0)
+                span = max_b - min_b
+                span[span == 0] = 1.0
+
+                u = np.clip(((v[:, 0] - min_b[0]) / span[0]) * (img_w - 1), 0, img_w - 1).astype(int)
+                y_norm = (v[:, 1] - min_b[1]) / span[1]
+                v_coord = np.clip((1.0 - y_norm) * (img_h - 1), 0, img_h - 1).astype(int)
+                sampled_colors = img_np[v_coord, u]
+                mesh.visual.vertex_colors = sampled_colors
+            except Exception as e_col:
+                logging.warning(f"Color projection fallback: {e_col}")
+
             self._progress("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét…", 88, task_id=task_id)
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
