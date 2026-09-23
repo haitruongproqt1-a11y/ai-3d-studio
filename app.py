@@ -52,7 +52,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.9.0"
+APP_VERSION = "v1.9.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -1748,7 +1748,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.9.0</span>
+    <span class="ver" id="ver">v1.9.1</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
@@ -2206,31 +2206,44 @@ function setMode(m) {
     if (el) el.style.display = 'none';
   });
 
+  const progTxt = document.getElementById('progTxt');
+  const barWrap = document.getElementById('barWrap');
+  const bar = document.getElementById('bar');
+  const spin = document.getElementById('spin');
+  if (barWrap) barWrap.style.display = 'none';
+  if (bar) bar.style.width = '0%';
+  if (spin) spin.style.display = 'none';
+
   if (m === 'local') {
     document.getElementById('tabLocal').classList.add('on');
     document.getElementById('localSet').style.display = '';
     document.getElementById('icTitle').textContent = '⚡ GPU Cục bộ – NVIDIA RTX 3050 (100% Offline)';
     document.getElementById('icDesc').innerHTML = 'Tạo 3D bằng card RTX 3050 máy bạn. <b>Không cần mạng, không hết lượt</b>, nướng vân UV 1024px mịn màng.';
+    if (progTxt) progTxt.innerHTML = '<span style="color:#34d399;font-weight:600">⚡ Đã chọn RTX 3050: 100% chạy trên card máy bạn, KHÔNG GIỚI HẠN số lần! Bấm nút bên dưới để tạo.</span>';
   } else if (m === 'img2threejs') {
     document.getElementById('tabImg2Three').classList.add('on');
     document.getElementById('img2threeSet').style.display = '';
     document.getElementById('icTitle').textContent = '🎨 img2threejs – Tái tạo 3D bằng Code & TRELLIS';
-    document.getElementById('icDesc').innerHTML = 'Công nghệ tái tạo mô hình 3D cho Three.js, Blender và Unity từ hình ảnh hoặc ý tưởng văn bản.';
+    document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Hugging Face ZeroGPU. <b>Lưu ý:</b> Tài khoản miễn phí bị giới hạn 1-2 lần/ngày.';
+    if (progTxt) progTxt.innerHTML = '<span style="color:#38bdf8">🎨 img2threejs (TRELLIS Cloud): Yêu cầu máy chủ A100 ở xa, giới hạn 1-2 lần/ngày. Muốn tạo liên tục hãy dùng tab RTX 3050!</span>';
   } else if (m === 'meshy') {
     document.getElementById('tabMeshy').classList.add('on');
     document.getElementById('meshySet').style.display = '';
     document.getElementById('icTitle').textContent = '💎 Meshy AI Pro (Chất lượng Game AAA Siêu Thực)';
     document.getElementById('icDesc').innerHTML = 'Được tặng <b>200 credits miễn phí mỗi tháng</b>. Vân PBR phản chiếu ánh sáng chân thực 100%.';
+    if (progTxt) progTxt.textContent = '💎 Meshy AI: Nhập API key trong Cài đặt để tạo mô hình chất lượng AAA.';
   } else if (m === 'tripo') {
     document.getElementById('tabTripo').classList.add('on');
     document.getElementById('tripoSet').style.display = '';
     document.getElementById('icTitle').textContent = '🚀 Tripo3D Studio (300 Credits Web)';
     document.getElementById('icDesc').innerHTML = 'Tạo trên web <b>platform.tripo3d.ai</b> rồi nạp vào bằng nút <b>📂 Nạp 3D ngoài</b>.';
+    if (progTxt) progTxt.textContent = '🚀 Tripo3D: Tạo trên web platform.tripo3d.ai rồi nạp file .glb vào bằng nút "Nạp 3D ngoài".';
   } else {
     document.getElementById('tabCloud').classList.add('on');
     document.getElementById('cloudSet').style.display = '';
     document.getElementById('icTitle').textContent = '🌐 Chế độ Hybrid Cloud Multi-View';
     document.getElementById('icDesc').innerHTML = 'Dùng máy chủ Cloud tái tạo 6 góc nhìn đa chiều 360°.';
+    if (progTxt) progTxt.textContent = '🌐 Hybrid Cloud: Tái tạo đa góc nhìn qua máy chủ đám mây.';
   }
   updateGenBtnText();
 }
