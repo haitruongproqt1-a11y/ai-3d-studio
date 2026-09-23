@@ -829,9 +829,13 @@ class AppApi:
         global hunyuan_pipeline
 
         if not is_hunyuan_downloaded():
+            model_p = os.path.join(HUNYUAN_MODEL_DIR, "model.fp16.safetensors")
+            dl_bytes = os.path.getsize(model_p) if os.path.exists(model_p) else 0
+            total_bytes = 3822584202
+            pct = round((dl_bytes / total_bytes) * 100, 1)
             return {
                 "success": False,
-                "error": "Mô hình Hunyuan3D-2 Turbo đang được tải về ổ đĩa trong nền (3.6 GB).\n👉 Vui lòng đợi hoàn tất hoặc chuyển sang '⚡ RTX Siêu Tốc (TripoSR)' để tạo ngay lập tức 100% offline!"
+                "error": f"Mô hình Hunyuan3D-2 Turbo đang được tải về ổ đĩa trong nền: {format_file_size(dl_bytes)} / {format_file_size(total_bytes)} ({pct}%).\n\n👉 Vui lòng đợi trong giây lát hoặc chuyển sang '⚡ RTX Siêu Tốc (TripoSR)' để tạo ngay lập tức 100% offline!"
             }
 
         if hunyuan_pipeline is None or not _hunyuan_ready.is_set():
@@ -1635,7 +1639,19 @@ function setMode(m) {
     document.getElementById('turboSet').style.display = '';
     document.getElementById('icTitle').textContent = '🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo';
     document.getElementById('icDesc').innerHTML = 'Kiến trúc DiT Flow Matching thế hệ mới, <b>tách khối sắc nét, mô hình thực và chất lượng cao</b>, không bị biến dạng hay dính bệt.';
-    if (progTxt) progTxt.innerHTML = '<span style="color:#f472b6;font-weight:600">🐉 Đã chọn RTX Đẳng Cấp: Mô hình 3D thực tế chi tiết cao. Bấm nút bên dưới để tạo!</span>';
+    if (window.pywebview && window.pywebview.api) {
+      window.pywebview.api.get_hunyuan_status().then(st => {
+        if (st && !st.downloaded) {
+          if (progTxt) progTxt.innerHTML = `<span style="color:#f59e0b;font-weight:600">⏳ Mô hình Hunyuan Turbo đang tải trong nền: ${st.dl_str} (${st.pct}%). Bạn có thể dùng '⚡ RTX Siêu Tốc' ngay lập tức!</span>`;
+        } else {
+          if (progTxt) progTxt.innerHTML = '<span style="color:#f472b6;font-weight:600">🐉 Đã chọn RTX Đẳng Cấp: Mô hình 3D thực tế chi tiết cao. Bấm nút bên dưới để tạo!</span>';
+        }
+      }).catch(() => {
+        if (progTxt) progTxt.innerHTML = '<span style="color:#f472b6;font-weight:600">🐉 Đã chọn RTX Đẳng Cấp: Mô hình 3D thực tế chi tiết cao. Bấm nút bên dưới để tạo!</span>';
+      });
+    } else {
+      if (progTxt) progTxt.innerHTML = '<span style="color:#f472b6;font-weight:600">🐉 Đã chọn RTX Đẳng Cấp: Mô hình 3D thực tế chi tiết cao. Bấm nút bên dưới để tạo!</span>';
+    }
   } else {
     document.getElementById('tabTripoSR').classList.add('on');
     document.getElementById('triposrSet').style.display = '';
