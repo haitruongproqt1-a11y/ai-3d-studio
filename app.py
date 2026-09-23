@@ -81,7 +81,7 @@ _hunyuan_ready = threading.Event()
 def is_hunyuan_downloaded():
     config_p = os.path.join(HUNYUAN_MODEL_DIR, "config.yaml")
     model_p = os.path.join(HUNYUAN_MODEL_DIR, "model.fp16.safetensors")
-    return os.path.exists(config_p) and os.path.exists(model_p) and os.path.getsize(model_p) > 3_000_000_000
+    return os.path.exists(config_p) and os.path.exists(model_p) and os.path.getsize(model_p) >= 3_822_580_000
 
 def load_ai_model():
     """Load TripoSR for Fast Engine with mutual VRAM cleanup."""
