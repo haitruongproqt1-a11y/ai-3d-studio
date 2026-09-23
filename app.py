@@ -845,9 +845,8 @@ class AppApi:
                 return {"success": False, "error": "Không thể nạp mô hình Hunyuan3D-2 Turbo vào VRAM GPU."}
 
         try:
-            self._progress("🖼 Khử bóng, chuẩn hóa tỷ lệ khung hình 3D…", 15, task_id=task_id)
-            with Image.open(file_path) as im:
-                image = im.convert("RGBA")
+            self._progress("🤖 Lọc sạch nền, watermark & chuẩn hóa khung hình 3D…", 15, task_id=task_id)
+            image = self._preprocess(file_path).convert("RGBA")
 
             if target_dir:
                 item_dir = target_dir
@@ -881,10 +880,10 @@ class AppApi:
             # ── HD COLOR & TEXTURE PROJECTION ──
             self._progress("🎨 AI đang đổ màu & ánh sáng gốc lên mô hình 3D…", 82, task_id=task_id)
             try:
-                img_rgba = image.convert("RGBA")
-                img_w, img_h = img_rgba.size
-                img_np = np.array(img_rgba)
+                img_w, img_h = image.size
+                img_np = np.array(image)
                 v = mesh.vertices.copy()
+                vn = mesh.vertex_normals
                 min_b = v.min(axis=0)
                 max_b = v.max(axis=0)
                 span = max_b - min_b
@@ -893,7 +892,16 @@ class AppApi:
                 u = np.clip(((v[:, 0] - min_b[0]) / span[0]) * (img_w - 1), 0, img_w - 1).astype(int)
                 y_norm = (v[:, 1] - min_b[1]) / span[1]
                 v_coord = np.clip((1.0 - y_norm) * (img_h - 1), 0, img_h - 1).astype(int)
-                sampled_colors = img_np[v_coord, u]
+                sampled_colors = img_np[v_coord, u].copy()
+
+                # Fix back projection bleed: If normal points backwards, blend with smooth ambient tone
+                is_back = vn[:, 2] < -0.1
+                if np.any(is_back):
+                    valid_mask = sampled_colors[:, 3] > 128
+                    body_tone = np.median(sampled_colors[valid_mask], axis=0) if np.any(valid_mask) else np.array([200, 200, 200, 255])
+                    blend = np.clip((-vn[is_back, 2] - 0.1) / 0.9, 0.0, 0.85)[:, None]
+                    sampled_colors[is_back] = (sampled_colors[is_back] * (1.0 - blend) + body_tone * blend).astype(np.uint8)
+
                 mesh.visual.vertex_colors = sampled_colors
             except Exception as e_col:
                 logging.warning(f"Color projection fallback: {e_col}")
@@ -1442,6 +1450,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <button class="btn-act ready" id="btnDir" onclick="openDir()" title="Mở thư mục chứa file đã tạo">
           📁 Mở thư mục
         </button>
+        <button class="btn-act ready" id="btnMixamo" onclick="openMixamoModal()" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border-color:#f59e0b" title="Gắn khung xương tự động và tạo động tác Game qua Mixamo">
+          🦴 Gắn Xương (Mixamo)
+        </button>
       </div>
     </div>
 
@@ -1518,6 +1529,33 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <div class="m-foot">
       <button class="btn-m btn-m-sec" onclick="closeUpdate()">Đóng</button>
       <button class="btn-m btn-m-pri" id="btnApply" style="display:none" onclick="applyUpd()">Cài đặt ngay</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mixamo Auto-Rigging Modal -->
+<div class="modal-bg" id="mMixamo">
+  <div class="modal" style="width:620px">
+    <div class="m-hdr">
+      <span class="m-title" style="color:#f59e0b;display:flex;align-items:center;gap:7px">
+        🦴 Gắn Xương Tự Động & Động Tác Game (Adobe Mixamo)
+      </span>
+      <button class="m-x" onclick="closeMixamoModal()">✕</button>
+    </div>
+    <div style="font-size:12px;color:#cbd5e1;line-height:1.6;display:flex;flex-direction:column;gap:10px">
+      <p>Adobe Mixamo là nền tảng gắn khung xương nhân vật 3D <b>tự động số 1 thế giới</b> và cung cấp hơn <b>2.500 động tác Game hoàn toàn miễn phí</b>.</p>
+      
+      <div style="background:#0b0e14;border:1px solid #1e2638;border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px">
+        <b style="color:#60a5fa">Quy trình 3 bước cực kỳ đơn giản:</b>
+        <div>1️⃣ Nhấn nút <b>"📁 Mở thư mục chứa file OBJ"</b> bên dưới để lấy file <code>model.obj</code>.</div>
+        <div>2️⃣ Nhấn nút <b>"🌐 Mở Adobe Mixamo"</b>, đăng nhập miễn phí, bấm nút <b>Upload Character</b> rồi kéo thả file vào.</div>
+        <div>3️⃣ Kéo 5 điểm khớp (Cằm, 2 Cổ tay, 2 Đầu gối, Háng) -> Chọn động tác Game bạn thích (Chạy, nhảy, chiến đấu...) và tải file <b>FBX</b> nạp thẳng vào Game!</div>
+      </div>
+    </div>
+    <div class="m-foot" style="gap:8px">
+      <button class="btn-m btn-m-sec" onclick="closeMixamoModal()">Đóng</button>
+      <button class="btn-m btn-m-sec" onclick="openDir()">📁 Mở thư mục chứa file OBJ</button>
+      <button class="btn-m" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border:none" onclick="openMixamoWeb()">🌐 Mở Adobe Mixamo</button>
     </div>
   </div>
 </div>
@@ -2093,6 +2131,20 @@ async function openItemFolder(id) {
 
 function openLibraryRoot() {
   window.pywebview.api.open_folder();
+}
+
+function openMixamoModal() {
+  document.getElementById('mMixamo').style.display = 'flex';
+}
+function closeMixamoModal() {
+  document.getElementById('mMixamo').style.display = 'none';
+}
+function openMixamoWeb() {
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.open_external_url('https://www.mixamo.com');
+  } else {
+    window.open('https://www.mixamo.com', '_blank');
+  }
 }
 </script>
 </body>
