@@ -52,7 +52,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v1.8.3"
+APP_VERSION = "v1.9.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
@@ -158,6 +158,76 @@ def enhance_texture(img: Image.Image) -> Image.Image:
         pass
     return img
 
+# ── Library & Metadata helpers ──────────────────────────────────────────────
+def format_file_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+def _get_thumbnail_data_url(item_dir: str) -> str:
+    thumb_path = os.path.join(item_dir, "thumb.jpg")
+    if not os.path.exists(thumb_path):
+        for c in ("input.png", "concept.png", "texture.png", "material_0.png"):
+            cp = os.path.join(item_dir, c)
+            if os.path.exists(cp):
+                try:
+                    with Image.open(cp) as im:
+                        im = im.convert("RGB")
+                        im.thumbnail((180, 180))
+                        im.save(thumb_path, "JPEG", quality=75)
+                    break
+                except Exception:
+                    pass
+    if os.path.exists(thumb_path):
+        try:
+            with open(thumb_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f"data:image/jpeg;base64,{b64}"
+        except Exception:
+            pass
+    return ""
+
+def _save_model_metadata(item_dir, name="", engine="RTX 3050 Offline", prompt="", source="image", input_img_path=None):
+    try:
+        os.makedirs(item_dir, exist_ok=True)
+        # Generate thumbnail
+        thumb_path = os.path.join(item_dir, "thumb.jpg")
+        if not os.path.exists(thumb_path):
+            img_cand = input_img_path if (input_img_path and os.path.exists(input_img_path)) else None
+            if not img_cand:
+                for c in ("input.png", "concept.png", "texture.png", "material_0.png"):
+                    cp = os.path.join(item_dir, c)
+                    if os.path.exists(cp):
+                        img_cand = cp
+                        break
+            if img_cand:
+                try:
+                    with Image.open(img_cand) as im:
+                        im = im.convert("RGB")
+                        im.thumbnail((180, 180))
+                        im.save(thumb_path, "JPEG", quality=75)
+                except Exception as te:
+                    logging.warning(f"thumb.jpg error: {te}")
+
+        # Save metadata
+        meta_path = os.path.join(item_dir, "meta.json")
+        meta = {
+            "id": os.path.basename(item_dir),
+            "name": name or prompt or f"Mô hình 3D #{os.path.basename(item_dir)[-6:]}",
+            "engine": engine,
+            "prompt": prompt,
+            "source": source,
+            "created_at": time.time(),
+            "created_str": time.strftime("%d/%m/%Y %H:%M", time.localtime())
+        }
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"_save_model_metadata error: {e}")
+
 
 # ── AppApi ──────────────────────────────────────────────────────────────────
 class AppApi:
@@ -211,6 +281,187 @@ class AppApi:
             except Exception as e:
                 return {"success": False, "error": str(e)}
         return {"success": False, "error": "Chưa có mô hình nào được tạo."}
+
+    # ── 3D MODEL LIBRARY API ────────────────────────────────────────────────
+    def get_library_items(self):
+        items = []
+        if not os.path.exists(OUTPUT_DIR):
+            return {"success": True, "items": [], "count": 0, "total_size_mb": 0}
+
+        dirs = [d for d in os.listdir(OUTPUT_DIR) if os.path.isdir(os.path.join(OUTPUT_DIR, d))]
+        total_bytes = 0
+
+        for d in dirs:
+            p = os.path.join(OUTPUT_DIR, d)
+            glb = os.path.join(p, "model.glb")
+            if not os.path.exists(glb) or os.path.getsize(glb) < 1000:
+                continue
+
+            glb_bytes = os.path.getsize(glb)
+            obj = os.path.join(p, "model.obj")
+            obj_bytes = os.path.getsize(obj) if os.path.exists(obj) else 0
+            total_bytes += glb_bytes + obj_bytes
+
+            meta_file = os.path.join(p, "meta.json")
+            meta = {}
+            if os.path.exists(meta_file):
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except Exception:
+                    pass
+
+            engine = meta.get("engine", "")
+            engine_key = "local"
+            if not engine:
+                if d.startswith("img2three_"):
+                    engine = "img2threejs (TRELLIS)"
+                    engine_key = "img2threejs"
+                elif d.startswith("txt_img2three_"):
+                    engine = "img2threejs (Từ chữ)"
+                    engine_key = "img2threejs"
+                elif d.startswith("txt_"):
+                    engine = "RTX 3050 (Từ chữ)"
+                    engine_key = "local"
+                elif d.startswith("meshy_"):
+                    engine = "Meshy AI AAA"
+                    engine_key = "meshy"
+                elif d.startswith("tripo3d_"):
+                    engine = "Tripo3D Studio"
+                    engine_key = "tripo"
+                elif d.startswith("cloud_"):
+                    engine = "Hybrid Cloud"
+                    engine_key = "cloud"
+                else:
+                    engine = "RTX 3050 Offline"
+                    engine_key = "local"
+            else:
+                eng_lower = engine.lower()
+                if "img2three" in eng_lower:
+                    engine_key = "img2threejs"
+                elif "meshy" in eng_lower:
+                    engine_key = "meshy"
+                elif "tripo" in eng_lower:
+                    engine_key = "tripo"
+                elif "cloud" in eng_lower:
+                    engine_key = "cloud"
+                else:
+                    engine_key = "local"
+
+            created_at = meta.get("created_at") or os.path.getmtime(glb)
+            created_str = meta.get("created_str") or time.strftime("%d/%m/%Y %H:%M", time.localtime(created_at))
+            name = meta.get("name") or meta.get("prompt") or f"Mô hình 3D #{d[-6:]}"
+
+            thumb_url = _get_thumbnail_data_url(p)
+
+            items.append({
+                "id": d,
+                "name": name,
+                "engine": engine,
+                "engine_key": engine_key,
+                "prompt": meta.get("prompt", ""),
+                "source": meta.get("source", "image"),
+                "created_at": created_at,
+                "created_str": created_str,
+                "glb_size": format_file_size(glb_bytes),
+                "glb_bytes": glb_bytes,
+                "obj_size": format_file_size(obj_bytes) if obj_bytes else "",
+                "has_obj": obj_bytes > 0,
+                "thumb_url": thumb_url,
+                "folder": p
+            })
+
+        items.sort(key=lambda x: x["created_at"], reverse=True)
+        return {
+            "success": True,
+            "items": items,
+            "count": len(items),
+            "total_size_mb": round(total_bytes / (1024 * 1024), 1)
+        }
+
+    def load_library_item(self, item_id):
+        p = os.path.join(OUTPUT_DIR, item_id)
+        glb = os.path.join(p, "model.glb")
+        if not os.path.exists(glb) or os.path.getsize(glb) < 1000:
+            return {"success": False, "error": "Tệp mô hình không tồn tại hoặc đã bị xóa."}
+
+        try:
+            with open(glb, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            obj = os.path.join(p, "model.obj")
+            self.last_glb = glb
+            self.last_obj = obj if os.path.exists(obj) else ""
+            self.last_folder = p
+
+            meta_file = os.path.join(p, "meta.json")
+            name = f"Mô hình #{item_id[-6:]}"
+            engine = "3D Studio"
+            if os.path.exists(meta_file):
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                        name = meta.get("name") or meta.get("prompt") or name
+                        engine = meta.get("engine") or engine
+                except Exception:
+                    pass
+
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "folder": p,
+                "glb_path": glb,
+                "obj_path": self.last_obj,
+                "name": name,
+                "engine": engine
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Không thể nạp mô hình: {e}"}
+
+    def delete_library_item(self, item_id):
+        p = os.path.join(OUTPUT_DIR, item_id)
+        if not os.path.exists(p):
+            return {"success": False, "error": "Mục không tồn tại hoặc đã bị xóa."}
+        try:
+            shutil.rmtree(p)
+            if self.last_folder == p:
+                self.last_folder = OUTPUT_DIR
+                self.last_glb = ""
+                self.last_obj = ""
+            return {"success": True, "deleted_id": item_id}
+        except Exception as e:
+            return {"success": False, "error": f"Không thể xóa: {e}"}
+
+    def open_library_item_folder(self, item_id):
+        p = os.path.join(OUTPUT_DIR, item_id)
+        return self.open_folder(p)
+
+    def export_library_item(self, item_id, file_type="glb"):
+        p = os.path.join(OUTPUT_DIR, item_id)
+        src = os.path.join(p, f"model.{file_type}")
+        if not os.path.exists(src):
+            return {"success": False, "error": f"Không tìm thấy file model.{file_type}"}
+
+        default_filename = f"{item_id}.{file_type}"
+        file_filter = (f"{file_type.upper()} 3D Model (*.{file_type})", "All Files (*.*)")
+
+        result = self._window.create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=default_filename,
+            file_types=file_filter,
+        )
+        if result:
+            dst = result[0] if isinstance(result, (list, tuple)) else str(result)
+            try:
+                shutil.copy2(src, dst)
+                if file_type == "obj":
+                    for extra in ("texture.png", "model.mtl", "normal.png", "material_0.png", "material.mtl"):
+                        s_extra = os.path.join(p, extra)
+                        if os.path.exists(s_extra):
+                            shutil.copy2(s_extra, os.path.join(os.path.dirname(dst), extra))
+                return {"success": True, "saved_path": dst}
+            except Exception as e:
+                return {"success": False, "error": f"Không thể lưu: {e}"}
+        return {"success": False, "canceled": True}
 
     def get_init_data(self):
         latest = self._find_latest_model()
@@ -363,6 +614,14 @@ class AppApi:
                 if res.get("success"):
                     res["concept_data"] = concept_data_url
                     res["prompt"] = prompt
+                    _save_model_metadata(
+                        item_dir,
+                        name=prompt,
+                        engine="img2threejs (Từ văn bản)",
+                        prompt=prompt,
+                        source="text",
+                        input_img_path=concept_file
+                    )
                 return res
             except Exception as e:
                 logging.exception("generate_from_text img2threejs error")
@@ -416,6 +675,14 @@ class AppApi:
             if res.get("success"):
                 res["concept_data"] = concept_data_url
                 res["prompt"] = prompt
+                _save_model_metadata(
+                    item_dir,
+                    name=prompt,
+                    engine=res.get("engine_used", "RTX 3050 (Từ chữ)"),
+                    prompt=prompt,
+                    source="text",
+                    input_img_path=concept_file
+                )
             return res
 
         except Exception as e:
@@ -554,6 +821,14 @@ class AppApi:
             self.last_obj = out_obj
             self.last_folder = item_dir
 
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine=engine_label,
+                source="image",
+                input_img_path=os.path.join(item_dir, "input.png")
+            )
+
             self._progress("✅ Hoàn tất! Đang nạp mô hình 3D vào Studio…", 98)
             with open(out_glb, "rb") as f:
                 glb_b64 = base64.b64encode(f.read()).decode()
@@ -682,6 +957,15 @@ class AppApi:
             self.last_glb = local_glb
             self.last_obj = local_obj if os.path.exists(local_obj) else local_glb
             self.last_folder = item_dir
+
+            _save_model_metadata(
+                item_dir,
+                name=prompt or (os.path.splitext(os.path.basename(file_path))[0] if file_path else "Mô hình Meshy"),
+                engine="Meshy AI Pro (Chuẩn Game AAA)",
+                prompt=prompt or "",
+                source="text" if prompt else "image",
+                input_img_path=file_path if file_path else None
+            )
 
             self._progress("✅ Hoàn tất! Đang nạp mô hình Meshy Studio PBR…", 98)
             with open(local_glb, "rb") as f:
@@ -812,6 +1096,14 @@ class AppApi:
             self.last_obj = local_obj if os.path.exists(local_obj) else local_glb
             self.last_folder = item_dir
 
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine="Tripo3D Studio Pro",
+                source="image",
+                input_img_path=file_path
+            )
+
             self._progress("✅ Hoàn tất! Đang nạp mô hình Studio PBR…", 98)
             with open(local_glb, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
@@ -878,6 +1170,14 @@ class AppApi:
             self.last_glb = local_glb
             self.last_obj = local_obj
             self.last_folder = item_dir
+
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine=f"Cloud Multi-View ({steps} Steps)",
+                source="image",
+                input_img_path=file_path
+            )
 
             self._progress("✅ Hoàn tất! Đang nạp mô hình 3D…", 95)
             with open(local_glb, "rb") as f:
@@ -1017,6 +1317,14 @@ class AppApi:
             self.last_obj = local_obj if os.path.exists(local_obj) else local_glb
             self.last_folder = item_dir
 
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine="img2threejs (TRELLIS 3D)",
+                source="image",
+                input_img_path=file_path
+            )
+
             self._progress("✅ Hoàn tất! Đang nạp mô hình img2threejs vào Studio…", 98)
             with open(local_glb, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
@@ -1035,11 +1343,12 @@ class AppApi:
             msg = str(e)
             if "storage" in msg.lower():
                 msg = "⚠️ Phiên kết nối Hugging Face bị gián đoạn. Vui lòng bấm thử lại!"
-            elif "quota" in msg.lower() or "ZeroGPU" in msg or "429" in msg or "timed out" in msg.lower() or "timeout" in msg.lower():
-                msg = ("⚠️ Máy chủ TRELLIS AI đang bận hoặc quá tải lượt dùng.\n\n"
-                       "👉 GIẢI PHÁP TỐT NHẤT:\n"
-                       "1. Dùng tab '⚡ RTX 3050 (Offline)': Chạy 100% trên card máy tính của bạn, không cần mạng!\n"
-                       "2. Dán Hugging Face Token vào '⚙️ Cài đặt' để có hạn ngạch ưu tiên cao hơn!")
+            elif "quota" in msg.lower() or "zerogpu" in msg.lower() or "429" in msg or "timed out" in msg.lower() or "timeout" in msg.lower() or "exceeded" in msg.lower():
+                msg = (
+                    "⚠️ Hugging Face ZeroGPU đã hết hạn mức miễn phí hôm nay (giới hạn 1-2 lần/ngày).\n\n"
+                    "👉 ĐỂ TẠO KHÔNG GIỚI HẠN:\n"
+                    "Chuyển sang thẻ '⚡ RTX 3050 (Offline)' trên thanh công cụ! Chạy trực tiếp 100% trên card đồ họa máy bạn, KHÔNG CẦN MẠNG, TẠO BAO NHIÊU LẦN TÙY THÍCH!"
+                )
             return {"success": False, "error": msg}
 
     # ── settings ─────────────────────────────────────────────────────────────
@@ -1373,6 +1682,65 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
 /* ── Banner ── */
 .banner{background:rgba(37,99,235,.12);border:1px solid rgba(37,99,235,.3);border-radius:8px;padding:8px 12px;font-size:11px;color:#93c5fd;display:none;align-items:center;gap:7px}
+
+/* ── Library Header Button & Badges ── */
+.btn-lib-hdr{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border:1px solid #3b82f6;display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;transition:.18s;box-shadow:0 2px 8px rgba(37,99,235,.25)}
+.btn-lib-hdr:hover{background:linear-gradient(135deg,#2563eb,#3b82f6);transform:translateY(-1px);box-shadow:0 4px 12px rgba(37,99,235,.4)}
+.badge-pill{background:#38bdf8;color:#0f172a;font-size:10px;font-weight:800;padding:1px 6px;border-radius:10px;line-height:1.3}
+
+/* ── 3D Library Modal (Full screen sleek grid) ── */
+.modal-lib{width:960px;max-width:95vw;height:84vh;max-height:740px;display:flex;flex-direction:column;gap:12px;padding:20px;overflow:hidden}
+.lib-header{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:1px solid #1e2638;flex-shrink:0}
+.lib-title-row{display:flex;align-items:center;gap:10px}
+.lib-title{font-size:16px;font-weight:800;color:#60a5fa;display:flex;align-items:center;gap:8px}
+.lib-stats{font-size:12px;color:#94a3b8;background:#151c2a;border:1px solid #28354b;padding:3px 10px;border-radius:6px}
+
+.lib-controls{display:flex;flex-direction:column;gap:10px;flex-shrink:0}
+.lib-search-row{display:flex;gap:10px;align-items:center}
+.lib-search-input{flex:1;background:#0d111a;border:1px solid #28354b;color:#f1f5f9;padding:8px 12px;border-radius:8px;font-size:12px;outline:none;transition:.15s}
+.lib-search-input:focus{border-color:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,.25)}
+.btn-lib-folder{background:#151c2a;border:1px solid #28354b;color:#94a3b8;padding:8px 12px;border-radius:8px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.15s}
+.btn-lib-folder:hover{background:#1e293b;border-color:#38bdf8;color:#f1f5f9}
+
+.lib-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.lib-chip{background:#0e1320;border:1px solid #1e2638;color:#94a3b8;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:5px}
+.lib-chip:hover{background:#182236;color:#e2e8f0;border-color:#38bdf8}
+.lib-chip.active{background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border-color:#60a5fa;box-shadow:0 2px 8px rgba(37,99,235,.3)}
+.chip-num{background:rgba(0,0,0,.3);padding:1px 6px;border-radius:10px;font-size:9.5px;font-weight:700}
+
+/* Grid & Cards */
+.lib-grid-wrap{flex:1;overflow-y:auto;min-height:0;padding-right:4px}
+.lib-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));gap:14px;padding:4px 0}
+.lib-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:240px;color:#64748b;gap:10px;text-align:center}
+
+.lib-card{background:#0f1422;border:1px solid #1e273a;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;transition:all .18s;position:relative}
+.lib-card:hover{border-color:#3b82f6;transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.4)}
+
+.lib-card-thumb{height:140px;background:#06080e;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.lib-card-thumb img{width:100%;height:100%;object-fit:cover;transition:transform .2s}
+.lib-card:hover .lib-card-thumb img{transform:scale(1.05)}
+.lib-thumb-fallback{color:#334155;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px}
+
+.lib-badge-engine{position:absolute;top:8px;left:8px;font-size:10px;font-weight:700;padding:3px 7px;border-radius:5px;backdrop-filter:blur(6px);box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.badge-local{background:rgba(16,185,129,.85);color:#fff}
+.badge-img2three{background:rgba(2,132,199,.85);color:#fff}
+.badge-meshy{background:rgba(192,38,211,.85);color:#fff}
+.badge-tripo{background:rgba(225,29,72,.85);color:#fff}
+.badge-cloud{background:rgba(14,165,233,.85);color:#fff}
+
+.lib-badge-size{position:absolute;bottom:8px;right:8px;background:rgba(10,12,18,.8);border:1px solid rgba(255,255,255,.1);font-size:10px;font-weight:600;color:#cbd5e1;padding:2px 6px;border-radius:4px;backdrop-filter:blur(4px)}
+
+.lib-card-body{padding:10px 12px;display:flex;flex-direction:column;gap:6px;flex:1}
+.lib-card-name{font-size:12.5px;font-weight:700;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib-card-sub{font-size:10.5px;color:#64748b;display:flex;justify-content:space-between;align-items:center}
+
+.lib-card-actions{display:flex;gap:4px;margin-top:auto;padding-top:8px;border-top:1px solid #1a2233}
+.lib-btn-act{flex:1;background:#151c2a;border:1px solid #25334c;color:#cbd5e1;padding:5px 6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;text-align:center;transition:.15s;white-space:nowrap}
+.lib-btn-act:hover{background:#1e2a3f;border-color:#38bdf8;color:#fff}
+.lib-btn-pri{background:linear-gradient(135deg,#1d4ed8,#2563eb);border-color:#3b82f6;color:#fff}
+.lib-btn-pri:hover{background:linear-gradient(135deg,#2563eb,#3b82f6)}
+.lib-btn-del{flex:0 0 28px;background:#1c1418;border-color:#4a1e28;color:#f87171}
+.lib-btn-del:hover{background:#dc2626;color:#fff;border-color:#ef4444}
 </style>
 </head>
 <body>
@@ -1380,10 +1748,13 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v1.7.0</span>
+    <span class="ver" id="ver">v1.9.0</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
+    <button class="btn-lib-hdr" onclick="openLibrary()" title="Mở Thư viện quản lý các mô hình 3D đã tạo">
+      🏛️ Thư viện 3D <span class="badge-pill" id="libBadgeHdr">0</span>
+    </button>
     <button class="btn-hdr" onclick="openSettings()">⚙️ Cài đặt &amp; API Key</button>
     <button class="btn-hdr" onclick="openUpdate()">🔄 Cập nhật</button>
   </div>
@@ -1556,6 +1927,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
       <!-- Action Buttons -->
       <div class="tool-group">
+        <button class="btn-act ready" onclick="openLibrary()" style="background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border-color:#60a5fa" title="Xem và quản lý toàn bộ mô hình 3D trong thư viện">
+          🏛️ Thư viện (<span id="libBadgeToolbar">0</span>)
+        </button>
         <button class="btn-act ready" id="btnLoadLast" onclick="loadLastModel()" style="display:none;background:linear-gradient(135deg,#0284c7,#2563eb);color:#fff" title="Xem lại mô hình 3D vừa tạo trong phiên trước">
           ↺ Xem mô hình trước
         </button>
@@ -1662,6 +2036,56 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
   </div>
 </div>
 
+<!-- 3D Model Library modal -->
+<div class="modal-bg" id="mLib">
+  <div class="modal modal-lib">
+    <div class="lib-header">
+      <div class="lib-title-row">
+        <div class="lib-title">
+          <span>🏛️</span> Thư viện Mô hình 3D
+        </div>
+        <div class="lib-stats" id="libStats">
+          Đang quét thư viện…
+        </div>
+      </div>
+      <button class="m-x" onclick="closeLibrary()">&times;</button>
+    </div>
+
+    <div class="lib-controls">
+      <div class="lib-search-row">
+        <input type="text" class="lib-search-input" id="libSearchInput" placeholder="🔍 Tìm kiếm theo tên mô hình, câu lệnh prompt hoặc nguồn tạo..." oninput="filterLib()">
+        <button class="btn-lib-folder" onclick="openLibraryRoot()" title="Mở thư mục chứa toàn bộ mô hình 3D trên ổ đĩa">
+          📁 Mở thư mục gốc
+        </button>
+      </div>
+      <div class="lib-chips">
+        <button class="lib-chip active" id="chipAll" onclick="setLibFilter('all')">
+          Tất cả <span class="chip-num" id="cntAll">0</span>
+        </button>
+        <button class="lib-chip" id="chipLocal" onclick="setLibFilter('local')">
+          ⚡ RTX 3050 <span class="chip-num" id="cntLocal">0</span>
+        </button>
+        <button class="lib-chip" id="chipImg2Three" onclick="setLibFilter('img2threejs')">
+          🎨 img2threejs <span class="chip-num" id="cntImg2Three">0</span>
+        </button>
+        <button class="lib-chip" id="chipMeshy" onclick="setLibFilter('meshy')">
+          💎 Meshy AAA <span class="chip-num" id="cntMeshy">0</span>
+        </button>
+        <button class="lib-chip" id="chipTripo" onclick="setLibFilter('tripo')">
+          🚀 Tripo3D <span class="chip-num" id="cntTripo">0</span>
+        </button>
+        <button class="lib-chip" id="chipCloud" onclick="setLibFilter('cloud')">
+          🌐 Hybrid <span class="chip-num" id="cntCloud">0</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="lib-grid-wrap">
+      <div class="lib-grid" id="libGrid"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ── state ── */
 let imgPath = null, lastFolder = null, dlUrl = null, curMode = 'local', curSource = 'image';
@@ -1749,6 +2173,8 @@ window.addEventListener('pywebviewready', async () => {
   } else {
     window._setProgress('⚡ Studio sẵn sàng! Chọn ảnh hoặc nhập văn bản để tạo mô hình 3D.', -1);
   }
+
+  updateLibBadge();
 });
 
 async function loadLastModel() {
@@ -1901,6 +2327,7 @@ async function generate() {
             if (r.concept_data) {
               document.getElementById('conceptTxt').textContent = '✅ Đã hoàn tất mô hình 3D!';
             }
+            updateLibBadge();
           } else {
             window._setProgress('❌ ' + ((r && r.error) ? r.error : 'Lỗi không xác định'), -1);
             bar.style.width = '0%';
@@ -2058,6 +2485,210 @@ async function applyUpd() {
       "<span style='color:#ef4444'>❌ "+r.error+"</span>";
     document.getElementById('btnApply').disabled = false;
   }
+}
+
+/* ── 3D Library State & Controller ── */
+let _libItems = [];
+let _curLibFilter = 'all';
+
+async function updateLibBadge() {
+  try {
+    const res = await window.pywebview.api.get_library_items();
+    if (res && res.success) {
+      _libItems = res.items || [];
+      const count = res.count || 0;
+      const hBadge = document.getElementById('libBadgeHdr');
+      const tBadge = document.getElementById('libBadgeToolbar');
+      if (hBadge) hBadge.textContent = count;
+      if (tBadge) tBadge.textContent = count;
+      updateFilterCounts();
+    }
+  } catch (e) {
+    console.warn('updateLibBadge error:', e);
+  }
+}
+
+function updateFilterCounts() {
+  const counts = { all: _libItems.length, local: 0, img2threejs: 0, meshy: 0, tripo: 0, cloud: 0 };
+  _libItems.forEach(it => {
+    const k = it.engine_key || 'local';
+    if (counts[k] !== undefined) counts[k]++;
+  });
+  const cAll = document.getElementById('cntAll'); if (cAll) cAll.textContent = counts.all;
+  const cLoc = document.getElementById('cntLocal'); if (cLoc) cLoc.textContent = counts.local;
+  const cImg = document.getElementById('cntImg2Three'); if (cImg) cImg.textContent = counts.img2threejs;
+  const cMsy = document.getElementById('cntMeshy'); if (cMsy) cMsy.textContent = counts.meshy;
+  const cTrp = document.getElementById('cntTripo'); if (cTrp) cTrp.textContent = counts.tripo;
+  const cCld = document.getElementById('cntCloud'); if (cCld) cCld.textContent = counts.cloud;
+}
+
+async function openLibrary() {
+  document.getElementById('mLib').style.display = 'flex';
+  await refreshLibraryData();
+}
+
+function closeLibrary() {
+  document.getElementById('mLib').style.display = 'none';
+}
+
+async function refreshLibraryData() {
+  const stats = document.getElementById('libStats');
+  if (stats) stats.textContent = 'Đang tải dữ liệu…';
+  const res = await window.pywebview.api.get_library_items();
+  if (res && res.success) {
+    _libItems = res.items || [];
+    if (stats) stats.innerHTML = '<b>' + res.count + '</b> mô hình • Dung lượng: <b>' + res.total_size_mb + ' MB</b>';
+    const hBadge = document.getElementById('libBadgeHdr');
+    const tBadge = document.getElementById('libBadgeToolbar');
+    if (hBadge) hBadge.textContent = res.count;
+    if (tBadge) tBadge.textContent = res.count;
+    updateFilterCounts();
+    renderLibGrid();
+  } else {
+    if (stats) stats.textContent = 'Lỗi nạp thư viện';
+  }
+}
+
+function setLibFilter(cat) {
+  _curLibFilter = cat;
+  ['chipAll','chipLocal','chipImg2Three','chipMeshy','chipTripo','chipCloud'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('active');
+  });
+  if (cat === 'all') { const el = document.getElementById('chipAll'); if (el) el.classList.add('active'); }
+  else if (cat === 'local') { const el = document.getElementById('chipLocal'); if (el) el.classList.add('active'); }
+  else if (cat === 'img2threejs') { const el = document.getElementById('chipImg2Three'); if (el) el.classList.add('active'); }
+  else if (cat === 'meshy') { const el = document.getElementById('chipMeshy'); if (el) el.classList.add('active'); }
+  else if (cat === 'tripo') { const el = document.getElementById('chipTripo'); if (el) el.classList.add('active'); }
+  else if (cat === 'cloud') { const el = document.getElementById('chipCloud'); if (el) el.classList.add('active'); }
+  renderLibGrid();
+}
+
+function filterLib() {
+  renderLibGrid();
+}
+
+function renderLibGrid() {
+  const grid = document.getElementById('libGrid');
+  if (!grid) return;
+  const searchInput = document.getElementById('libSearchInput');
+  const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
+  const filtered = _libItems.filter(item => {
+    if (_curLibFilter !== 'all' && item.engine_key !== _curLibFilter) {
+      return false;
+    }
+    if (query) {
+      const matchName = (item.name || '').toLowerCase().includes(query);
+      const matchPrompt = (item.prompt || '').toLowerCase().includes(query);
+      const matchEng = (item.engine || '').toLowerCase().includes(query);
+      const matchId = (item.id || '').toLowerCase().includes(query);
+      if (!matchName && !matchPrompt && !matchEng && !matchId) return false;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div class="lib-empty" style="grid-column: 1/-1">' +
+      '<svg style="width:48px;height:48px;opacity:.3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
+      '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+      '</svg>' +
+      '<p style="font-size:13px;font-weight:600">Không tìm thấy mô hình 3D nào</p>' +
+      '<p style="font-size:11px;color:#475569">Hãy thử đổi từ khóa tìm kiếm hoặc chọn bộ lọc khác.</p>' +
+      '</div>';
+    return;
+  }
+
+  let html = '';
+  filtered.forEach(it => {
+    let badgeClass = 'badge-local';
+    if (it.engine_key === 'img2threejs') badgeClass = 'badge-img2three';
+    else if (it.engine_key === 'meshy') badgeClass = 'badge-meshy';
+    else if (it.engine_key === 'tripo') badgeClass = 'badge-tripo';
+    else if (it.engine_key === 'cloud') badgeClass = 'badge-cloud';
+
+    const thumbHtml = it.thumb_url
+      ? '<img src="' + it.thumb_url + '" alt="' + (it.name || '3D') + '" loading="lazy">'
+      : '<div class="lib-thumb-fallback">' +
+        '<svg style="width:36px;height:36px;opacity:.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
+        '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+        '</svg>' +
+        '<span>3D Model</span>' +
+        '</div>';
+
+    const safeName = (it.name || 'Mô hình 3D').replace(/"/g, '&quot;');
+    const safeId = it.id;
+
+    html += '<div class="lib-card" id="card-' + safeId + '">' +
+      '<div class="lib-card-thumb">' +
+      thumbHtml +
+      '<div class="lib-badge-engine ' + badgeClass + '">' + it.engine + '</div>' +
+      '<div class="lib-badge-size">' + it.glb_size + '</div>' +
+      '</div>' +
+      '<div class="lib-card-body">' +
+      '<div class="lib-card-name" title="' + safeName + '">' + safeName + '</div>' +
+      '<div class="lib-card-sub">' +
+      '<span>📅 ' + it.created_str + '</span>' +
+      '<span>' + (it.source === 'text' ? '✍️ Chữ' : '🖼️ Ảnh') + '</span>' +
+      '</div>' +
+      '<div class="lib-card-actions">' +
+      '<button class="lib-btn-act lib-btn-pri" onclick="loadFromLibrary(\'' + safeId + '\')" title="Xem mô hình xoay 360°">👁️ Xem 3D</button>' +
+      '<button class="lib-btn-act" onclick="exportFromLibrary(\'' + safeId + '\', \'glb\')" title="Lưu file GLB về máy tính">📦 GLB</button>' +
+      (it.has_obj ? '<button class="lib-btn-act" onclick="exportFromLibrary(\'' + safeId + '\', \'obj\')" title="Lưu file OBJ">📦 OBJ</button>' : '') +
+      '<button class="lib-btn-act" onclick="openItemFolder(\'' + safeId + '\')" title="Mở thư mục chứa file">📁</button>' +
+      '<button class="lib-btn-act lib-btn-del" onclick="deleteFromLibrary(\'' + safeId + '\', \'' + safeName + '\')" title="Xóa mô hình này để giải phóng dung lượng SSD">🗑️</button>' +
+      '</div>' +
+      '</div>' +
+      '</div>';
+  });
+  grid.innerHTML = html;
+}
+
+async function loadFromLibrary(id) {
+  window._setProgress('Đang nạp mô hình từ thư viện…', 40);
+  const r = await window.pywebview.api.load_library_item(id);
+  if (r && r.success) {
+    lastFolder = r.folder;
+    const mv = document.getElementById('mv');
+    mv.src = r.glb_data;
+    mv.style.display = 'block';
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('hint').style.display = 'block';
+    window._setProgress('✨ Đã nạp thành công \'' + r.name + '\' (' + r.engine + ') từ Thư viện!', 100);
+    closeLibrary();
+  } else {
+    alert('❌ Không thể nạp mô hình: ' + ((r && r.error) ? r.error : 'Lỗi không xác định'));
+  }
+}
+
+async function deleteFromLibrary(id, name) {
+  if (!confirm('Bạn có chắc chắn muốn xóa mô hình "' + name + '" khỏi ổ đĩa?\n\nThao tác này sẽ xóa vĩnh viễn và giải phóng dung lượng SSD.')) {
+    return;
+  }
+  const r = await window.pywebview.api.delete_library_item(id);
+  if (r && r.success) {
+    await refreshLibraryData();
+    window._setProgress('🗑️ Đã xóa mô hình "' + name + '" thành công!', -1);
+  } else {
+    alert('❌ Không thể xóa: ' + ((r && r.error) ? r.error : 'Lỗi không xác định'));
+  }
+}
+
+async function exportFromLibrary(id, type) {
+  const r = await window.pywebview.api.export_library_item(id, type);
+  if (r && r.success) {
+    window._setProgress('✅ Đã lưu file ' + type.toUpperCase() + ': ' + r.saved_path, -1);
+  } else if (r && !r.canceled) {
+    alert('❌ Lỗi lưu file: ' + r.error);
+  }
+}
+
+async function openItemFolder(id) {
+  await window.pywebview.api.open_library_item_folder(id);
+}
+
+function openLibraryRoot() {
+  window.pywebview.api.open_folder();
 }
 </script>
 </body>

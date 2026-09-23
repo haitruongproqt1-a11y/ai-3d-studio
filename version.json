@@ -1,12 +1,14 @@
 {
-  "version": "1.8.3",
+  "version": "1.9.0",
   "buildDate": "2026-09-23",
   "releaseNotes": [
-    "Khắc phục triệt để hiện tượng ứng dụng không mở được do khóa Socket trùng lặp",
-    "Tối ưu khởi động siêu tốc (<1s): chuyển nạp model AI sang chế độ Lazy Loading theo yêu cầu",
-    "Tiết kiệm 3.5GB RAM và 2.5GB GPU VRAM khi khởi động, loại bỏ 100% hiện tượng giật lag",
-    "Bỏ nạp tự động mô hình 3D dung lượng lớn trên khởi động, thêm nút '↺ Xem mô hình trước' nạp tức thì theo nhu cầu",
-    "Tự động dọn dẹp các tiến trình ngầm cũ trước khi khởi chạy và đồng bộ toàn bộ lối tắt Desktop về ổ SSD H:"
+    "Thêm Thư viện Mô hình 3D (3D Model Library) lưu trữ tự động toàn bộ mô hình đã tạo",
+    "Xem lại mô hình 3D tức thì trong thư viện không cần tạo lại, tiết kiệm thời gian",
+    "Hỗ trợ tìm kiếm, lọc theo nguồn tạo (RTX 3050, img2threejs, Meshy AAA, Tripo3D, Cloud)",
+    "Tính năng Xóa mô hình trực tiếp trong thư viện để giải phóng dung lượng ổ đĩa SSD",
+    "Xuất nhanh file GLB, OBJ và mở thư mục chứa tệp trực tiếp từ thẻ mô hình",
+    "Khắc phục lỗi tạo mô hình 3D trên card RTX 3050 Offline (tạo KHÔNG GIỚI HẠN, 100% miễn phí)",
+    "Thêm hướng dẫn chi tiết khi gặp hạn mức Hugging Face ZeroGPU (1-2 lần/ngày) chuyển sang RTX 3050"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.8.3/update_v1.8.3.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v1.9.0/update_v1.9.0.zip"
 }
