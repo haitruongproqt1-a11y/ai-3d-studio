@@ -1100,18 +1100,23 @@ class AppApi:
             req = urllib.request.Request(url, headers={"User-Agent": "AI-3D-Studio"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode("utf-8"))
-            latest = data.get("version", APP_VERSION)
-            rel_notes = data.get("release_notes", "")
+            latest = str(data.get("version", APP_VERSION)).strip()
+            rel_notes_raw = data.get("releaseNotes") or data.get("release_notes", "")
+            if isinstance(rel_notes_raw, list):
+                rel_notes = "\n".join(f"• {note}" for note in rel_notes_raw)
+            else:
+                rel_notes = str(rel_notes_raw)
             dl_url = data.get("ota_url") or data.get("download_url") or ""
-            has_update = latest.strip().lstrip("v") != APP_VERSION.strip().lstrip("v")
+            has_update = latest.lstrip("v") != APP_VERSION.strip().lstrip("v")
             return {
                 "has_update": has_update,
                 "current_version": APP_VERSION,
-                "latest_version": latest,
+                "latest_version": f"v{latest.lstrip('v')}",
                 "release_notes": rel_notes,
                 "download_url": dl_url,
             }
         except Exception as e:
+            logging.warning(f"check_updates error: {e}")
             return {"has_update": False, "error": str(e), "current_version": APP_VERSION}
 
     def apply_update(self, download_url):
@@ -1952,25 +1957,36 @@ async function importModel() {
 }
 
 /* ── update ── */
-function openUpdate() { document.getElementById('mUpd').style.display='flex'; }
-function closeUpdate() { document.getElementById('mUpd').style.display='none'; }
+function openUpdate() {
+  document.getElementById('mUpd').style.display = 'flex';
+  checkUpd();
+}
+function closeUpdate() { document.getElementById('mUpd').style.display = 'none'; }
 async function checkUpd() {
-  document.getElementById('updTxt').textContent = 'Đang kiểm tra từ máy chủ GitHub…';
-  document.getElementById('btnApply').style.display='none';
-  document.getElementById('updNotes').style.display='none';
-  const r = await window.pywebview.api.check_updates();
-  if (r.has_update) {
-    document.getElementById('updTxt').innerHTML =
-      "<span style='color:#10b981;font-weight:700'>🎉 Phát hiện bản mới: "+r.latest_version+" (Hiện tại: "+r.current_version+")</span>";
-    if (r.release_notes) {
-      document.getElementById('updNotes').textContent = r.release_notes;
-      document.getElementById('updNotes').style.display='block';
+  document.getElementById('updTxt').innerHTML = "<span style='color:#38bdf8'>⏳ Đang kết nối máy chủ GitHub kiểm tra phiên bản mới…</span>";
+  document.getElementById('btnApply').style.display = 'none';
+  document.getElementById('updNotes').style.display = 'none';
+  try {
+    const r = await window.pywebview.api.check_updates();
+    if (r.has_update) {
+      document.getElementById('updTxt').innerHTML =
+        "<span style='color:#10b981;font-weight:700'>🎉 Phát hiện bản mới: " + r.latest_version + " (Hiện tại: " + r.current_version + ")</span>";
+      if (r.release_notes) {
+        document.getElementById('updNotes').textContent = r.release_notes;
+        document.getElementById('updNotes').style.display = 'block';
+      }
+      dlUrl = r.download_url;
+      document.getElementById('btnApply').style.display = 'inline-block';
+    } else if (r.error) {
+      document.getElementById('updTxt').innerHTML =
+        "<span style='color:#ef4444'>⚠️ Lỗi kiểm tra: " + r.error + "</span><br><button class='btn-m btn-m-sec' style='margin-top:8px' onclick='checkUpd()'>🔄 Thử lại</button>";
+    } else {
+      document.getElementById('updTxt').innerHTML =
+        "<span style='color:#38bdf8'>✓ Bạn đang sử dụng phiên bản mới nhất (" + r.current_version + ")</span>";
     }
-    dlUrl = r.download_url;
-    document.getElementById('btnApply').style.display='inline-block';
-  } else {
+  } catch (err) {
     document.getElementById('updTxt').innerHTML =
-      "<span style='color:#38bdf8'>✓ Bạn đang sử dụng phiên bản mới nhất ("+r.current_version+")</span>";
+      "<span style='color:#ef4444'>⚠️ Lỗi kết nối: " + err + "</span><br><button class='btn-m btn-m-sec' style='margin-top:8px' onclick='checkUpd()'>🔄 Thử lại</button>";
   }
 }
 
