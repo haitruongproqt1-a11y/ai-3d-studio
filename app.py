@@ -36,7 +36,7 @@ import rembg
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.0"
+APP_VERSION = "v2.0.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -542,7 +542,7 @@ class AppApi:
     def start_generate_3d(self, file_path, engine="turbo",
                           mc_resolution=None, bake_tex=False,
                           smooth=True, quality="pbr_1024",
-                          num_steps=10, octree_res=380):
+                          num_steps=10, octree_res=160):
         task_id = str(time.time_ns())
         self._tasks[task_id] = {
             "status": "running", "msg": "Đang khởi động tiến trình GPU…",
@@ -568,7 +568,7 @@ class AppApi:
         return {"task_id": task_id}
 
     def start_generate_from_text(self, prompt, engine="turbo", quality="pbr_1024",
-                                 smooth=True, num_steps=10, octree_res=380):
+                                 smooth=True, num_steps=10, octree_res=160):
         task_id = str(time.time_ns())
         self._tasks[task_id] = {
             "status": "running", "msg": "Đang phân tích câu lệnh văn bản…",
@@ -609,9 +609,41 @@ class AppApi:
         arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
         return Image.fromarray((arr * 255).astype(np.uint8))
 
+    def _preprocess_hunyuan(self, file_path: str, task_id=None) -> Image.Image:
+        self._progress("🤖 AI đang phân đoạn & tách sạch nền trong suốt 100%…", 10, task_id=task_id)
+        orig = Image.open(file_path)
+        try:
+            os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
+            clean_rgba = rembg.remove(orig)
+        except Exception as e:
+            logging.warning(f"rembg remove warning: {e}")
+            clean_rgba = remove_background(orig.convert("RGB"))
+
+        if clean_rgba.mode != "RGBA":
+            clean_rgba = clean_rgba.convert("RGBA")
+
+        # Crop to subject bounds with 5% padding so Hunyuan3D centers perfectly on the subject
+        arr = np.array(clean_rgba)
+        if arr.shape[2] == 4:
+            alpha = arr[:, :, 3]
+            coords = np.nonzero(alpha > 15)
+            if len(coords[0]) > 0:
+                y_min, y_max = coords[0].min(), coords[0].max()
+                x_min, x_max = coords[1].min(), coords[1].max()
+                h, w = y_max - y_min, x_max - x_min
+                pad_y = max(4, int(h * 0.05))
+                pad_x = max(4, int(w * 0.05))
+                y0 = max(0, y_min - pad_y)
+                y1 = min(arr.shape[0], y_max + pad_y)
+                x0 = max(0, x_min - pad_x)
+                x1 = min(arr.shape[1], x_max + pad_x)
+                clean_rgba = clean_rgba.crop((x0, y0, x1, y1))
+
+        return clean_rgba
+
     # ── TEXT TO 3D PIPELINE ──────────────────────────────────────────────────
     def generate_from_text(self, prompt: str, engine="turbo", quality="pbr_1024",
-                           smooth=True, num_steps=10, octree_res=380, task_id=None):
+                           smooth=True, num_steps=10, octree_res=256, task_id=None):
         prompt = prompt.strip()
         if not prompt:
             return {"success": False, "error": "Vui lòng nhập mô tả văn bản cần tạo 3D!"}
@@ -680,7 +712,7 @@ class AppApi:
     def generate_3d(self, file_path, engine="turbo",
                     mc_resolution=None, bake_tex=False,
                     smooth=True, quality="pbr_1024",
-                    num_steps=10, octree_res=380, task_id=None):
+                    num_steps=10, octree_res=160, task_id=None):
         if engine in ("turbo", "hunyuan3d"):
             return self._gen_hunyuan3d_turbo(
                 file_path, num_steps=num_steps, octree_res=octree_res, task_id=task_id
@@ -825,7 +857,7 @@ class AppApi:
             return {"success": False, "error": f"Lỗi tạo 3D RTX: {e}"}
 
     # ── ENGINE 2: LOCAL REALISTIC (HUNYUAN3D-2 TURBO DIT FLOW MATCHING) ─────
-    def _gen_hunyuan3d_turbo(self, file_path, num_steps=10, octree_res=380, target_dir=None, task_id=None):
+    def _gen_hunyuan3d_turbo(self, file_path, num_steps=10, octree_res=160, target_dir=None, task_id=None):
         global hunyuan_pipeline
 
         if not is_hunyuan_downloaded():
@@ -839,14 +871,13 @@ class AppApi:
             }
 
         if hunyuan_pipeline is None or not _hunyuan_ready.is_set():
-            self._progress("⏳ Đang nạp Hunyuan3D-2 Turbo vào GPU RTX 3050…", 8, task_id=task_id)
+            self._progress("⏳ Đang nạp Hunyuan3D-2 Turbo vào GPU RTX 3050 (8%)…", 8, task_id=task_id)
             ok = load_hunyuan_model()
             if not ok or hunyuan_pipeline is None:
                 return {"success": False, "error": "Không thể nạp mô hình Hunyuan3D-2 Turbo vào VRAM GPU."}
 
         try:
-            self._progress("🤖 Lọc sạch nền, watermark & chuẩn hóa khung hình 3D…", 15, task_id=task_id)
-            image = self._preprocess(file_path).convert("RGBA")
+            image = self._preprocess_hunyuan(file_path, task_id=task_id)
 
             if target_dir:
                 item_dir = target_dir
@@ -860,25 +891,44 @@ class AppApi:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            self._progress(f"🐉 RTX 3050 suy luận Flow Matching ({num_steps} bước, Octree {octree_res})…", 30, task_id=task_id)
+            total_steps = int(num_steps)
+            self._progress(f"🐉 RTX 3050 suy luận Flow Matching: Bước 0/{total_steps} (25%)…", 25, task_id=task_id)
+
+            def step_cb(step_idx, t, outputs):
+                cur = step_idx + 1
+                pct = int(25 + (cur / total_steps) * 45)
+                if cur == total_steps:
+                    self._progress(
+                        "⚙️ RTX 3050 đang giải mã không gian ShapeVAE & trích xuất bề mặt mesh (72%)…",
+                        72,
+                        task_id=task_id
+                    )
+                else:
+                    self._progress(
+                        f"🐉 RTX 3050 suy luận Flow Matching: Bước {cur}/{total_steps} ({pct}%)…",
+                        pct,
+                        task_id=task_id
+                    )
 
             with torch.no_grad():
                 mesh_outputs = hunyuan_pipeline(
                     image=image,
-                    num_inference_steps=int(num_steps),
+                    num_inference_steps=total_steps,
                     octree_resolution=int(octree_res),
-                    num_chunks=4000,
+                    num_chunks=24000,
                     output_type="trimesh",
-                    enable_pbar=False
+                    enable_pbar=False,
+                    callback=step_cb,
+                    callback_steps=1
                 )
 
-            self._progress("⚙️ Tối ưu hóa lưới đa giác & khử mặt suy biến…", 75, task_id=task_id)
+            self._progress("⚙️ Đang giải mã ShapeVAE & trích xuất bề mặt 3D (75%)…", 75, task_id=task_id)
             mesh = mesh_outputs[0]
             if isinstance(mesh, list):
                 mesh = mesh[0]
 
             # ── HD COLOR & TEXTURE PROJECTION ──
-            self._progress("🎨 AI đang đổ màu & ánh sáng gốc lên mô hình 3D…", 82, task_id=task_id)
+            self._progress("🎨 AI đang chiếu màu & ánh sáng gốc lên mô hình 3D (85%)…", 85, task_id=task_id)
             try:
                 img_w, img_h = image.size
                 img_np = np.array(image)
@@ -906,7 +956,7 @@ class AppApi:
             except Exception as e_col:
                 logging.warning(f"Color projection fallback: {e_col}")
 
-            self._progress("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét…", 88, task_id=task_id)
+            self._progress("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét (95%)…", 95, task_id=task_id)
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
 
@@ -925,7 +975,7 @@ class AppApi:
                 input_img_path=file_path
             )
 
-            self._progress("✅ Hoàn tất! Mô hình 3D Hunyuan Turbo sẵn sàng.", 100, task_id=task_id)
+            self._progress("✅ Hoàn tất! Mô hình 3D Hunyuan Turbo sẵn sàng (100%).", 100, task_id=task_id)
             with open(glb_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode()
 
@@ -1378,10 +1428,11 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         </select>
       </div>
       <div class="sg" style="margin-bottom:7px">
-        <label>Độ phân giải Octree không gian:</label>
+        <label>Độ phân giải không gian Octree:</label>
         <select id="turboOctree">
-          <option value="380" selected>📐 380 Octree – Chuẩn tối ưu GPU RTX 3050 6GB</option>
-          <option value="320">⚡ 320 Octree – Tiết kiệm bộ nhớ VRAM</option>
+          <option value="160" selected>⚡ 160 Octree (~1 phút) – Cực nhanh, chuẩn nhẹ cho Game & Mixamo Rigging</option>
+          <option value="192">🚀 192 Octree (~2 phút) – Cân bằng sắc nét & tốc độ (Khuyên dùng)</option>
+          <option value="256">💎 256 Octree (~6-8 phút) – Siêu chi tiết, lưới dày</option>
         </select>
       </div>
     </div>

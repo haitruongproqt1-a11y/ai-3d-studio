@@ -1,14 +1,14 @@
 {
-  "version": "2.0.0",
-  "buildDate": "2026-09-23",
+  "version": "2.0.1",
+  "buildDate": "2026-09-24",
   "releaseNotes": [
-    "Nâng cấp lớn v2.0.0: Tích hợp công nghệ Tencent Hunyuan3D-2 Turbo DiT Flow Matching chạy 100% Offline trên GPU NVIDIA RTX 3050 6GB",
-    "Loại bỏ hoàn toàn các dịch vụ Cloud / API bên ngoài (Meshy, Tripo3D API, Cloud Multi-View, img2threejs) và loại bỏ cài đặt API key",
-    "Trang bị 2 động cơ AI GPU cục bộ: '⚡ RTX Siêu Tốc (TripoSR)' (~15s) và '🐉 RTX Đẳng Cấp (Hunyuan3D Turbo)' chi tiết cao sắc nét",
-    "Quản lý bộ nhớ VRAM thông minh: Tự động giải phóng và tối ưu VRAM cho card RTX 3050 6GB Laptop GPU",
-    "Nâng cấp Thư viện 3D Studio: Xem lại 360°, xuất GLB / OBJ đa nền tảng và quản lý xóa mô hình trên SSD"
+    "Khắc phục triệt để lỗi khối/khuôn chữ nhật thừa sau cánh tay và dưới chân: Tách nền trong suốt 100% chuẩn RGBA cho nhân Hunyuan3D DiT.",
+    "Hiển thị tiến trình % chi tiết theo thời gian thực: Báo trực tiếp từng bước suy luận Flow Matching từ 25% đến 100%, không bị cảm giác treo máy.",
+    "Tối ưu tốc độ giải mã 3D gấp 5-8 lần: Tăng kích thước bó xử lý VRAM (batch chunks 24.000) và tối ưu độ phân giải Octree 160/192 mượt mà trên RTX 3050 (~1-2 phút).",
+    "Chuẩn hóa xuất OBJ/GLB dạng T-Pose: Sẵn sàng đưa vào Adobe Mixamo tự động gắn xương (Rigging) 1 chạm và xuất vào Game Engine.",
+    "Bảo toàn màu sắc trung thực: Chiếu màu đa chiều kết hợp khử lọt sáng mặt sau (Back-bleed protection)."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.0/update_v2.0.0.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.0/update_v2.0.0.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.0/update_v2.0.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.1/update_v2.0.1.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.1/update_v2.0.1.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.1/update_v2.0.1.zip"
 }
