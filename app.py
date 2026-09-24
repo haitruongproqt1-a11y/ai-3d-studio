@@ -11,6 +11,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import socket
+import gc
 
 # Ensure portable cache paths on SSD H: are ALWAYS set FIRST before importing torch/TSR!
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -915,7 +916,7 @@ class AppApi:
                     image=image,
                     num_inference_steps=total_steps,
                     octree_resolution=int(octree_res),
-                    num_chunks=24000,
+                    num_chunks=8000,
                     output_type="trimesh",
                     enable_pbar=False,
                     callback=step_cb,
@@ -927,32 +928,68 @@ class AppApi:
             if isinstance(mesh, list):
                 mesh = mesh[0]
 
-            # ── HD COLOR & TEXTURE PROJECTION ──
-            self._progress("🎨 AI đang chiếu màu & ánh sáng gốc lên mô hình 3D (85%)…", 85, task_id=task_id)
+            # ── PRECISION ANATOMICAL COLOR & TEXTURE PROJECTION ──
+            self._progress("🎨 AI đang chiếu màu HD & cân chỉnh giải phẫu bề mặt (85%)…", 85, task_id=task_id)
             try:
-                img_w, img_h = image.size
-                img_np = np.array(image)
+                img_np = np.array(image.convert("RGBA"))
+                alpha = img_np[:, :, 3]
+
+                # 1. Inpaint transparent background so silhouette edges never sample black
+                mask = (alpha < 50).astype(np.uint8)
+                rgb_inpainted = cv2.inpaint(img_np[:, :, :3], mask, 7, cv2.INPAINT_TELEA)
+
+                # 2. Get exact subject bounding box in 2D
+                coords = np.nonzero(alpha > 50)
+                if len(coords[0]) > 0:
+                    y_min_2d, y_max_2d = coords[0].min(), coords[0].max()
+                    x_min_2d, x_max_2d = coords[1].min(), coords[1].max()
+                else:
+                    y_min_2d, y_max_2d = 0, img_np.shape[0] - 1
+                    x_min_2d, x_max_2d = 0, img_np.shape[1] - 1
+                span_x_2d = max(1, x_max_2d - x_min_2d)
+                span_y_2d = max(1, y_max_2d - y_min_2d)
+
+                # 3. 3D mesh bounds
                 v = mesh.vertices.copy()
                 vn = mesh.vertex_normals
                 min_b = v.min(axis=0)
                 max_b = v.max(axis=0)
-                span = max_b - min_b
-                span[span == 0] = 1.0
+                span_3d = max_b - min_b
+                span_3d[span_3d == 0] = 1.0
 
-                u = np.clip(((v[:, 0] - min_b[0]) / span[0]) * (img_w - 1), 0, img_w - 1).astype(int)
-                y_norm = (v[:, 1] - min_b[1]) / span[1]
-                v_coord = np.clip((1.0 - y_norm) * (img_h - 1), 0, img_h - 1).astype(int)
-                sampled_colors = img_np[v_coord, u].copy()
+                u_norm = np.clip((v[:, 0] - min_b[0]) / span_3d[0], 0.0, 1.0)
+                y_norm = np.clip((v[:, 1] - min_b[1]) / span_3d[1], 0.0, 1.0)
 
-                # Fix back projection bleed: If normal points backwards, blend with smooth ambient tone
-                is_back = vn[:, 2] < -0.1
-                if np.any(is_back):
-                    valid_mask = sampled_colors[:, 3] > 128
-                    body_tone = np.median(sampled_colors[valid_mask], axis=0) if np.any(valid_mask) else np.array([200, 200, 200, 255])
-                    blend = np.clip((-vn[is_back, 2] - 0.1) / 0.9, 0.0, 0.85)[:, None]
-                    sampled_colors[is_back] = (sampled_colors[is_back] * (1.0 - blend) + body_tone * blend).astype(np.uint8)
+                u = np.clip(x_min_2d + u_norm * span_x_2d, 0, image.width - 1).astype(int)
+                v_coord = np.clip(y_max_2d - y_norm * span_y_2d, 0, image.height - 1).astype(int)
 
-                mesh.visual.vertex_colors = sampled_colors
+                front_colors = rgb_inpainted[v_coord, u].astype(np.float32)
+
+                # Sample section-specific colors for the back of the model
+                helmet_mask = (y_norm > 0.85) & (u_norm > 0.4) & (u_norm < 0.6)
+                helmet_color = np.median(front_colors[helmet_mask], axis=0) if np.any(helmet_mask) else np.array([40, 75, 50], dtype=np.float32)
+
+                torso_mask = (y_norm > 0.35) & (y_norm < 0.65) & (u_norm > 0.4) & (u_norm < 0.6)
+                torso_color = np.median(front_colors[torso_mask], axis=0) if np.any(torso_mask) else np.array([45, 80, 55], dtype=np.float32)
+
+                pants_mask = (y_norm > 0.15) & (y_norm < 0.35) & (u_norm > 0.35) & (u_norm < 0.65)
+                pants_color = np.median(front_colors[pants_mask], axis=0) if np.any(pants_mask) else np.array([40, 75, 45], dtype=np.float32)
+
+                boot_mask = (y_norm < 0.12)
+                boot_color = np.median(front_colors[boot_mask], axis=0) if np.any(boot_mask) else np.array([30, 30, 30], dtype=np.float32)
+
+                back_colors = np.zeros_like(front_colors)
+                back_colors[y_norm > 0.72] = helmet_color
+                back_colors[(y_norm > 0.35) & (y_norm <= 0.72)] = torso_color
+                back_colors[(y_norm > 0.12) & (y_norm <= 0.35)] = pants_color
+                back_colors[y_norm <= 0.12] = boot_color
+
+                # Smooth normal-based transition: front gets 100% front, back gets 100% back (zero ghost face)
+                z_weight = np.clip((vn[:, 2] + 0.1) / 0.2, 0.0, 1.0)[:, None]
+                final_rgb = (front_colors * z_weight + back_colors * (1.0 - z_weight)).astype(np.uint8)
+                final_rgba = np.hstack([final_rgb, np.full((len(v), 1), 255, dtype=np.uint8)])
+
+                mesh.visual.vertex_colors = final_rgba
             except Exception as e_col:
                 logging.warning(f"Color projection fallback: {e_col}")
 
@@ -990,6 +1027,10 @@ class AppApi:
         except Exception as e:
             logging.exception("Hunyuan3D Turbo generation error")
             return {"success": False, "error": f"Lỗi tạo 3D Hunyuan Turbo: {e}"}
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
 
     # ── file operations ──────────────────────────────────────────────────────
     def open_folder(self, folder=None):
