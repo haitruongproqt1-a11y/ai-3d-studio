@@ -13,6 +13,7 @@ files_to_pack = [
     "app.py",
     "texture_engine.py",
     "version.json",
+    "Xem_File_3D.html",
     "Chay_AI_3D_Studio.bat",
     "Tat_AI_3D_Studio.bat",
     os.path.join("TripoSR", "tsr", "bake_texture.py"),

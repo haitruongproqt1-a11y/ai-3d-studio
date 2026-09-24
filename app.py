@@ -1165,8 +1165,7 @@ class AppApi:
 HTML = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
-<meta charset="UTF-8">
-<title>AI 3D Studio – RTX Siêu Tốc & RTX Đẳng Cấp (100% Offline GPU)</title>
+<script src="https://cdn.jsdelivr.net/npm/meshoptimizer@0.21.0/meshopt_decoder.js"></script>
 <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;user-select:none}
