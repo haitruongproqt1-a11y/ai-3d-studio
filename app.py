@@ -34,10 +34,11 @@ from tsr.utils import remove_background, resize_foreground
 import trimesh
 import cv2
 import rembg
+from meshy_client import MeshyClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.4"
+APP_VERSION = "v2.0.5"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -277,6 +278,7 @@ class AppApi:
         self.last_obj = ""
         self.last_folder = OUTPUT_DIR
         self.config = load_config()
+        self.meshy_client = MeshyClient(self.config.get("meshy_api_key", ""))
         self._tasks = {}
 
     def set_window(self, w):
@@ -392,12 +394,19 @@ class AppApi:
 
             engine = meta.get("engine", "")
             if not engine:
-                if "hy" in d.lower() or "turbo" in d.lower():
+                if "meshy" in d.lower():
+                    engine = "✨ Meshy AI Cloud (Hoàn Hảo 100%)"
+                elif "hy" in d.lower() or "turbo" in d.lower():
                     engine = "RTX Đẳng Cấp (Hunyuan3D Turbo)"
                 else:
                     engine = "RTX Siêu Tốc (TripoSR)"
 
-            engine_key = "turbo" if ("hunyuan" in engine.lower() or "turbo" in engine.lower() or "đẳng cấp" in engine.lower()) else "triposr"
+            if "meshy" in engine.lower():
+                engine_key = "meshy"
+            elif ("hunyuan" in engine.lower() or "turbo" in engine.lower() or "đẳng cấp" in engine.lower()):
+                engine_key = "turbo"
+            else:
+                engine_key = "triposr"
 
             created_at = meta.get("created_at") or os.path.getmtime(glb)
             created_str = meta.get("created_str") or time.strftime("%d/%m/%Y %H:%M", time.localtime(created_at))
@@ -523,6 +532,28 @@ class AppApi:
             "hunyuan_downloaded": is_hunyuan_downloaded(),
             "config": self.config,
             "latest_model": latest,
+            "meshy_status": {
+                "has_key": self.meshy_client.has_valid_key(),
+                "masked_key": self.meshy_client.get_masked_key()
+            }
+        }
+
+    def get_meshy_status(self):
+        return {
+            "has_key": self.meshy_client.has_valid_key(),
+            "masked_key": self.meshy_client.get_masked_key(),
+            "api_key": self.meshy_client.get_api_key()
+        }
+
+    def save_meshy_key(self, api_key: str):
+        clean_key = (api_key or "").strip()
+        self.config["meshy_api_key"] = clean_key
+        save_config(self.config)
+        self.meshy_client.set_api_key(clean_key)
+        return {
+            "success": True,
+            "has_key": self.meshy_client.has_valid_key(),
+            "masked_key": self.meshy_client.get_masked_key()
         }
 
     def get_hunyuan_status(self):
@@ -716,8 +747,14 @@ class AppApi:
                 safe_url = json.dumps(concept_data_url)
                 self._window.evaluate_js(f"window._showConcept({safe_url});")
 
-            # 3. Feed directly into selected RTX engine!
-            if engine in ("turbo", "hunyuan3d"):
+            # 3. Feed directly into selected engine!
+            if engine == "meshy":
+                self._progress("✨ Đưa hình phác họa vào Meshy AI Cloud tái tạo 3D…", 28, task_id=task_id)
+                res = self._gen_meshy_cloud(
+                    concept_file, enable_pbr=True,
+                    target_dir=item_dir, task_id=task_id
+                )
+            elif engine in ("turbo", "hunyuan3d"):
                 self._progress("🐉 Đưa hình phác họa vào RTX Hunyuan3D Turbo tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hunyuan3d_turbo(
                     concept_file, num_steps=num_steps, octree_res=octree_res,
@@ -752,6 +789,8 @@ class AppApi:
                     mc_resolution=None, bake_tex=False,
                     smooth=True, quality="pbr_1024",
                     num_steps=10, octree_res=160, task_id=None):
+        if engine == "meshy":
+            return self._gen_meshy_cloud(file_path, enable_pbr=True, task_id=task_id)
         if engine in ("turbo", "hunyuan3d"):
             return self._gen_hunyuan3d_turbo(
                 file_path, num_steps=num_steps, octree_res=octree_res, task_id=task_id
@@ -981,6 +1020,66 @@ class AppApi:
                 torch.cuda.ipc_collect()
             gc.collect()
 
+    # ── ENGINE 3: MESHY.AI CLOUD (100% STUDIO GRADE MULTI-VIEW PBR) ──────────
+    def _gen_meshy_cloud(self, file_path, enable_pbr=True, target_dir=None, task_id=None):
+        if not self.meshy_client.has_valid_key():
+            return {
+                "success": False,
+                "need_key": True,
+                "error": "Chưa cấu hình Meshy API Key! Vui lòng bấm '🔑 Đổi Key' hoặc nút bên dưới để dán API Key từ meshy.ai."
+            }
+        try:
+            self._progress("📤 Đang tối ưu ảnh và gửi yêu cầu tới máy chủ Meshy.ai Cloud…", 10, task_id=task_id)
+            meshy_task_id = self.meshy_client.create_image_to_3d_task(file_path, enable_pbr=enable_pbr)
+
+            self._progress("⏳ Đang xếp hàng xử lý trên cụm máy chủ GPU A100 Meshy.ai…", 18, task_id=task_id)
+
+            def _step_cb(msg, pct):
+                self._progress(msg, pct, task_id=task_id)
+
+            task_data = self.meshy_client.poll_task(meshy_task_id, progress_callback=_step_cb)
+
+            if target_dir:
+                item_dir = target_dir
+            else:
+                ts = int(time.time())
+                item_dir = os.path.join(OUTPUT_DIR, f"meshy_{ts}")
+                os.makedirs(item_dir, exist_ok=True)
+
+            self._progress("📥 Đang tải xuống mô hình GLB và vật liệu PBR 360° chuẩn Meshy…", 93, task_id=task_id)
+            paths = self.meshy_client.download_model_assets(task_data, item_dir, input_image_path=file_path)
+
+            glb_path = paths["glb_path"]
+            obj_path = paths["obj_path"]
+
+            self.last_glb = glb_path
+            self.last_obj = obj_path
+            self.last_folder = item_dir
+
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine="✨ Meshy AI Cloud (Hoàn Hảo 100%)",
+                source="image",
+                input_img_path=file_path
+            )
+
+            self._progress("✅ Hoàn tất! Mô hình 3D chuẩn Meshy sẵn sàng (100%).", 100, task_id=task_id)
+            with open(glb_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": glb_path,
+                "obj_path": obj_path,
+                "folder": item_dir,
+                "engine_used": "✨ Meshy AI Cloud (Hoàn Hảo 100%)"
+            }
+        except Exception as e:
+            logging.exception("_gen_meshy_cloud error")
+            return {"success": False, "error": f"Lỗi Meshy AI Cloud: {e}"}
+
     # ── file operations ──────────────────────────────────────────────────────
     def open_folder(self, folder=None):
         target = folder or self.last_folder or OUTPUT_DIR
@@ -1194,11 +1293,12 @@ header{height:52px;background:#131722;border-bottom:1px solid #232936;display:fl
 .src-tab{flex:1;padding:8px;border:none;border-radius:7px;background:transparent;color:#94a3b8;font-size:11.5px;font-weight:700;cursor:pointer;transition:.18s;display:flex;align-items:center;justify-content:center;gap:5px}
 .src-tab.active{background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.4)}
 
-/* ── 2 Local Offline RTX Engine Tabs ── */
-.tabs{display:grid;grid-template-columns:1fr 1fr;background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
-.tab{padding:8px 6px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:11px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
+/* ── 3 Engine Tabs: Meshy Cloud + 2 Local Offline RTX Engines ── */
+.tabs{display:grid;grid-template-columns:1.12fr 1fr 1fr;background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
+.tab{padding:8px 4px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:10.5px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
 .tab.on{background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.35)}
 .tab.turbo.on{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;box-shadow:0 2px 10px rgba(219,39,119,.4)}
+.tab.meshy.on{background:linear-gradient(135deg,#0284c7,#8b5cf6);color:#fff;box-shadow:0 2px 10px rgba(14,165,233,.45)}
 
 /* ── Drop zone ── */
 .drop{border:2px dashed #2d3748;border-radius:10px;padding:12px;text-align:center;cursor:pointer;background:#111622;min-height:130px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:.2s}
@@ -1237,6 +1337,8 @@ select,input[type=text]{background:#111622;border:1px solid #2d3748;color:#e2e8f
 /* ── Generate button ── */
 .btn-gen{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;border:none;padding:12px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 4px 14px rgba(219,39,119,.35);transition:.2s}
 .btn-gen.triposr-mode{background:linear-gradient(135deg,#1d4ed8,#2563eb);box-shadow:0 4px 14px rgba(37,99,235,.3)}
+.btn-gen.meshy-mode{background:linear-gradient(135deg,#0284c7,#8b5cf6);box-shadow:0 4px 14px rgba(14,165,233,.4)}
+.btn-gen.meshy-mode:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 18px rgba(14,165,233,.55)}
 .btn-gen:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 18px rgba(219,39,119,.45)}
 .btn-gen:disabled{background:#1a2030;color:#475569;cursor:not-allowed;box-shadow:none;transform:none}
 
@@ -1328,6 +1430,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 .lib-badge-engine{position:absolute;top:8px;left:8px;font-size:10px;font-weight:700;padding:3px 7px;border-radius:5px;backdrop-filter:blur(6px);box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .badge-turbo{background:rgba(192,38,211,.85);color:#fff}
 .badge-triposr{background:rgba(16,185,129,.85);color:#fff}
+.badge-meshy{background:linear-gradient(135deg,#0284c7,#8b5cf6);color:#fff}
 
 .lib-badge-size{position:absolute;bottom:8px;right:8px;background:rgba(10,12,18,.8);border:1px solid rgba(255,255,255,.1);font-size:10px;font-weight:600;color:#cbd5e1;padding:2px 6px;border-radius:4px;backdrop-filter:blur(4px)}
 
@@ -1349,10 +1452,13 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.0.4</span>
+    <span class="ver" id="ver">v2.0.5</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
+    <button class="btn-hdr" onclick="openMeshyKeyModal()" style="background:#0c4a6e;border-color:#0284c7;color:#38bdf8;font-weight:700" title="Cài đặt Meshy.ai Cloud API Key">
+      🔑 Meshy API
+    </button>
     <button class="btn-hdr" onclick="releaseGpu()" style="background:#064e3b;border-color:#059669;color:#6ee7b7" title="Giải phóng VRAM ngay lập tức, đưa RTX 3050 về chế độ nghỉ 0W để tiết kiệm pin">
       🍃 Trả GPU (0W)
     </button>
@@ -1374,10 +1480,11 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <button class="src-tab" id="srcTabTxt" onclick="switchSource('text')">✍️ Từ Văn Bản</button>
     </div>
 
-    <!-- 2 Engine tabs: Offline RTX Only -->
+    <!-- 3 Engine tabs: Meshy Cloud + 2 Local Offline RTX Engines -->
     <div class="tabs">
-      <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')">🐉 RTX Đẳng Cấp (Hunyuan Turbo)</button>
-      <button class="tab" id="tabTripoSR" onclick="setMode('triposr')">⚡ RTX Siêu Tốc (TripoSR)</button>
+      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')">✨ Meshy Cloud</button>
+      <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')">🐉 RTX Đẳng Cấp</button>
+      <button class="tab" id="tabTripoSR" onclick="setMode('triposr')">⚡ RTX Siêu Tốc</button>
     </div>
 
     <!-- 1. IMAGE MODE CONTAINER -->
@@ -1415,6 +1522,24 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <div class="info-card">
       <span class="ic-title" id="icTitle">🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo</span>
       <span class="ic-desc" id="icDesc">Kiến trúc DiT Flow Matching thế hệ mới, <b>tách khối sắc nét, mô hình thực và chất lượng cao</b>, không bị biến dạng hay dính bệt.</span>
+    </div>
+
+    <!-- Meshy.ai Cloud Settings -->
+    <div id="meshySet" style="display:none">
+      <div class="sg" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <label>Khóa Meshy API Key:</label>
+          <button class="tag-btn" onclick="openMeshyKeyModal()" style="font-size:10px;padding:2px 7px">🔑 Đổi Key</button>
+        </div>
+        <div id="meshyKeyStatusBox" style="font-size:11px;color:#cbd5e1;background:#0d111a;padding:7px 9px;border-radius:6px;border:1px solid #1e2638;display:flex;align-items:center;justify-content:space-between">
+          <span id="meshyKeyLabel">Chưa cấu hình API Key</span>
+          <button class="tag-btn" onclick="openMeshyKeyModal()" id="btnSetMeshyKey" style="font-size:10px;padding:2px 6px">Cài đặt</button>
+        </div>
+      </div>
+      <div class="chk-row" style="margin-bottom:6px">
+        <input type="checkbox" id="chkMeshyPbr" checked>
+        <label class="chk-row" for="chkMeshyPbr">💎 Vật liệu PBR HD (Độ bóng kim loại, phản quang chân thực 360°)</label>
+      </div>
     </div>
 
     <!-- Hunyuan3D Turbo Settings -->
@@ -1557,6 +1682,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       </div>
       <div class="lib-chips">
         <button class="lib-chip active" id="chipAll" onclick="setLibFilter('all')">Tất cả <span class="chip-num" id="cntAll">0</span></button>
+        <button class="lib-chip" id="chipMeshy" onclick="setLibFilter('meshy')">✨ Meshy Cloud <span class="chip-num" id="cntMeshy">0</span></button>
         <button class="lib-chip" id="chipTurbo" onclick="setLibFilter('turbo')">🐉 RTX Đẳng Cấp <span class="chip-num" id="cntTurbo">0</span></button>
         <button class="lib-chip" id="chipTripoSR" onclick="setLibFilter('triposr')">⚡ RTX Siêu Tốc <span class="chip-num" id="cntTripoSR">0</span></button>
       </div>
@@ -1611,12 +1737,47 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
   </div>
 </div>
 
+<!-- Meshy API Key Modal -->
+<div class="modal-bg" id="mMeshyKey">
+  <div class="modal" style="width:520px">
+    <div class="m-hdr">
+      <span class="m-title" style="color:#38bdf8;display:flex;align-items:center;gap:7px">
+        🔑 Cài đặt Meshy.ai Cloud API Key
+      </span>
+      <button class="m-x" onclick="closeMeshyKeyModal()">✕</button>
+    </div>
+    <div style="font-size:12px;color:#cbd5e1;line-height:1.5;display:flex;flex-direction:column;gap:10px">
+      <p>Meshy.ai là nền tảng AI tạo 3D từ ảnh hàng đầu thế giới trên cụm siêu máy tính GPU A100, cho chất lượng màu sắc và vật liệu PBR 360° chuẩn xác 100%.</p>
+      
+      <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px">
+        <b style="color:#60a5fa">Cách lấy API Key miễn phí từ Meshy:</b>
+        <div>1️⃣ Nhấn nút <b>"🌐 Mở trang Meshy.ai"</b> và đăng ký / đăng nhập tài khoản.</div>
+        <div>2️⃣ Vào menu <b>Settings</b> ➔ chọn mục <b>API Keys</b> ➔ bấm <b>Create API Key</b>.</div>
+        <div>3️⃣ Sao chép mã khóa bí mật và dán vào ô bên dưới:</div>
+      </div>
+
+      <div class="sg">
+        <label style="color:#94a3b8;font-weight:600">Dán mã Meshy API Key (msy_...):</label>
+        <input type="text" id="meshyKeyInput" placeholder="Ví dụ: msy_a1b2c3d4e5f6g7h8i9j0..." style="font-family:monospace;font-size:12px">
+      </div>
+      <div id="meshyKeySaveMsg" style="font-size:11px;min-height:16px"></div>
+    </div>
+    <div class="m-foot" style="gap:8px">
+      <button class="btn-m btn-m-sec" onclick="closeMeshyKeyModal()">Đóng</button>
+      <button class="btn-m btn-m-sec" onclick="openMeshyWeb()">🌐 Mở trang Meshy.ai</button>
+      <button class="btn-m btn-m-pri" onclick="saveMeshyKeyFromUi()" style="background:linear-gradient(135deg,#0284c7,#2563eb)">💾 Lưu API Key</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let curSource = 'image';
 let curMode = 'turbo';
 let imgPath = null;
 let lastFolder = '';
 let dlUrl = '';
+let _hasMeshyKey = false;
+let _maskedMeshyKey = '';
 
 /* ── Progress helper exposed to Python ── */
 window._setProgress = function(msg, pct) {
@@ -1663,6 +1824,11 @@ window.addEventListener('pywebviewready', async () => {
       if (init.latest_model && init.latest_model.has_model) {
         lastFolder = init.latest_model.folder;
         document.getElementById('btnLoadLast').style.display = 'inline-flex';
+      }
+      if (init.meshy_status) {
+        _hasMeshyKey = !!init.meshy_status.has_key;
+        _maskedMeshyKey = init.meshy_status.masked_key || '';
+        updateMeshyKeyUi();
       }
       updateLibBadge();
     }
@@ -1716,9 +1882,83 @@ function setPrompt(text) {
   p.focus();
 }
 
+function updateMeshyKeyUi() {
+  const lbl = document.getElementById('meshyKeyLabel');
+  const btn = document.getElementById('btnSetMeshyKey');
+  if (lbl) {
+    if (_hasMeshyKey) {
+      lbl.innerHTML = `<span style="color:#38bdf8;font-weight:600">✓ Đã kích hoạt: ${_maskedMeshyKey}</span>`;
+      if (btn) btn.textContent = 'Đổi key';
+    } else {
+      lbl.innerHTML = `<span style="color:#f59e0b">⚠️ Chưa có key (Bấm Cài đặt)</span>`;
+      if (btn) btn.textContent = 'Cài đặt';
+    }
+  }
+}
+
+async function openMeshyKeyModal() {
+  document.getElementById('mMeshyKey').style.display = 'flex';
+  const msg = document.getElementById('meshyKeySaveMsg');
+  if (msg) msg.textContent = '';
+  const input = document.getElementById('meshyKeyInput');
+  if (input && window.pywebview && window.pywebview.api) {
+    try {
+      const st = await window.pywebview.api.get_meshy_status();
+      if (st && st.api_key) {
+        input.value = st.api_key;
+      }
+    } catch(e) {}
+  }
+}
+
+function closeMeshyKeyModal() {
+  document.getElementById('mMeshyKey').style.display = 'none';
+}
+
+function openMeshyWeb() {
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.open_external_url('https://www.meshy.ai/');
+  } else {
+    window.open('https://www.meshy.ai/', '_blank');
+  }
+}
+
+async function saveMeshyKeyFromUi() {
+  const input = document.getElementById('meshyKeyInput');
+  const key = input ? input.value.trim() : '';
+  const msg = document.getElementById('meshyKeySaveMsg');
+  if (!key) {
+    if (msg) msg.innerHTML = '<span style="color:#ef4444">⚠️ Vui lòng dán mã API Key trước khi lưu!</span>';
+    return;
+  }
+  if (msg) msg.innerHTML = '<span style="color:#38bdf8">⏳ Đang lưu khóa bí mật...</span>';
+  try {
+    const res = await window.pywebview.api.save_meshy_key(key);
+    if (res && res.success) {
+      _hasMeshyKey = !!res.has_key;
+      _maskedMeshyKey = res.masked_key || '';
+      updateMeshyKeyUi();
+      if (msg) msg.innerHTML = '<span style="color:#10b981;font-weight:600">✓ Đã lưu thành công Meshy API Key!</span>';
+      setTimeout(() => {
+        closeMeshyKeyModal();
+        if (curMode === 'meshy') {
+          setMode('meshy');
+        }
+      }, 700);
+    } else {
+      if (msg) msg.innerHTML = '<span style="color:#ef4444">❌ Lỗi lưu key</span>';
+    }
+  } catch(e) {
+    if (msg) msg.innerHTML = '<span style="color:#ef4444">❌ Lỗi: ' + e + '</span>';
+  }
+}
+
 function updateGenBtnText() {
   const btn = document.getElementById('btnGen');
-  if (curMode === 'turbo') {
+  if (curMode === 'meshy') {
+    btn.className = 'btn-gen meshy-mode';
+    btn.innerHTML = (curSource === 'text') ? '✨ BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '✨ BẮT ĐẦU TẠO 3D (MESHY CLOUD 100%)';
+  } else if (curMode === 'turbo') {
     btn.className = 'btn-gen';
     btn.innerHTML = (curSource === 'text') ? '🐉 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '🐉 BẮT ĐẦU TẠO 3D (RTX ĐẲNG CẤP)';
   } else {
@@ -1730,8 +1970,10 @@ function updateGenBtnText() {
 /* ── engine switch ── */
 function setMode(m) {
   curMode = m;
+  document.getElementById('tabMeshy').classList.remove('on');
   document.getElementById('tabTurbo').classList.remove('on');
   document.getElementById('tabTripoSR').classList.remove('on');
+  document.getElementById('meshySet').style.display = 'none';
   document.getElementById('turboSet').style.display = 'none';
   document.getElementById('triposrSet').style.display = 'none';
 
@@ -1743,7 +1985,18 @@ function setMode(m) {
   if (bar) bar.style.width = '0%';
   if (spin) spin.style.display = 'none';
 
-  if (m === 'turbo') {
+  if (m === 'meshy') {
+    document.getElementById('tabMeshy').classList.add('on');
+    document.getElementById('meshySet').style.display = '';
+    document.getElementById('icTitle').textContent = '✨ Meshy.ai Cloud – Siêu Máy Tính GPU A100 (Chất Lượng Hoàn Hảo 100%)';
+    document.getElementById('icDesc').innerHTML = 'Tái tạo 3D hoàn mỹ từ ảnh: màu sắc chân thực, khử bóng đổ, gương mặt và kết cấu <b>giống 100% ảnh chụp gốc</b>.';
+    updateMeshyKeyUi();
+    if (_hasMeshyKey) {
+      if (progTxt) progTxt.innerHTML = '<span style="color:#38bdf8;font-weight:600">✨ Đã chọn Meshy AI Cloud: Chất lượng hoàn mỹ 100%. Bấm nút bên dưới để tạo!</span>';
+    } else {
+      if (progTxt) progTxt.innerHTML = '<span style="color:#f59e0b;font-weight:600">⚠️ Bạn chưa nhập Meshy API Key. Bấm \'🔑 Đổi Key\' để cài đặt miễn phí!</span>';
+    }
+  } else if (m === 'turbo') {
     document.getElementById('tabTurbo').classList.add('on');
     document.getElementById('turboSet').style.display = '';
     document.getElementById('icTitle').textContent = '🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo';
@@ -1806,6 +2059,12 @@ async function generate() {
       document.getElementById('promptInput').focus();
       return;
     }
+  }
+
+  if (curMode === 'meshy' && !_hasMeshyKey) {
+    window._setProgress('⚠️ Bạn chưa cài đặt Meshy API Key. Đang mở hộp thoại cài đặt…', -1);
+    openMeshyKeyModal();
+    return;
   }
 
   const btn = document.getElementById('btnGen');
@@ -2043,12 +2302,13 @@ async function updateLibBadge() {
 }
 
 function updateFilterCounts() {
-  const counts = { all: _libItems.length, turbo: 0, triposr: 0 };
+  const counts = { all: _libItems.length, meshy: 0, turbo: 0, triposr: 0 };
   _libItems.forEach(it => {
     const k = it.engine_key || 'triposr';
     if (counts[k] !== undefined) counts[k]++;
   });
   const cAll = document.getElementById('cntAll'); if (cAll) cAll.textContent = counts.all;
+  const cMsh = document.getElementById('cntMeshy'); if (cMsh) cMsh.textContent = counts.meshy;
   const cTrb = document.getElementById('cntTurbo'); if (cTrb) cTrb.textContent = counts.turbo;
   const cTsr = document.getElementById('cntTripoSR'); if (cTsr) cTsr.textContent = counts.triposr;
 }
@@ -2082,11 +2342,12 @@ async function refreshLibraryData() {
 
 function setLibFilter(cat) {
   _curLibFilter = cat;
-  ['chipAll','chipTurbo','chipTripoSR'].forEach(id => {
+  ['chipAll','chipMeshy','chipTurbo','chipTripoSR'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active');
   });
   if (cat === 'all') { const el = document.getElementById('chipAll'); if (el) el.classList.add('active'); }
+  else if (cat === 'meshy') { const el = document.getElementById('chipMeshy'); if (el) el.classList.add('active'); }
   else if (cat === 'turbo') { const el = document.getElementById('chipTurbo'); if (el) el.classList.add('active'); }
   else if (cat === 'triposr') { const el = document.getElementById('chipTripoSR'); if (el) el.classList.add('active'); }
   renderLibGrid();
@@ -2129,7 +2390,9 @@ function renderLibGrid() {
 
   let html = '';
   filtered.forEach(it => {
-    const badgeClass = (it.engine_key === 'turbo') ? 'badge-turbo' : 'badge-triposr';
+    let badgeClass = 'badge-triposr';
+    if (it.engine_key === 'meshy') badgeClass = 'badge-meshy';
+    else if (it.engine_key === 'turbo') badgeClass = 'badge-turbo';
 
     const thumbHtml = it.thumb_url
       ? '<img src="' + it.thumb_url + '" alt="' + (it.name || '3D') + '" loading="lazy">'

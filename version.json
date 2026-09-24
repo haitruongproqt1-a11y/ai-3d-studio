@@ -1,14 +1,15 @@
 {
-  "version": "2.0.4",
-  "buildDate": "2026-09-24",
+  "version": "2.0.5",
+  "buildDate": "2026-09-25",
   "releaseNotes": [
-    "Nâng cấp Động cơ kết cấu 360 Camera-Adaptive Universal PBR Texture Engine thế hệ mới (chuẩn Meshy): Khắc phục triệt để hiện tượng bề mặt loang lổ, biến dạng và lệch hình khi xoay 360 độ.",
-    "Hỗ trợ thích ứng đa chủ thể thông minh: Xử lý hoàn hảo các hình ảnh góc nghiêng 3/4 phức tạp (xe máy, ô tô, phương tiện, nhân vật ngồi xe, biển hiệu, đồ vật, linh vật) thay vì chỉ người đứng thẳng.",
-    "Định vị góc nhìn camera 3D siêu tốc (< 40ms): Thuật toán IoU Silhouette Matching tự động tính toán chính xác vector góc chụp camera (Azimuth, Elevation) từ ảnh 2D, loại bỏ hoàn toàn hiện tượng chiếu sai trục làm móp méo hình.",
-    "Tái tạo mặt sau và sườn xe tự nhiên, sắc nét: Tự động loại bỏ bóng phản chiếu, gương mặt và chữ in ngược ở mặt sau; giữ nguyên độ chi tiết kim loại chrome, lốp xe đen nhám, ống xả và kết cấu động cơ chuẩn xác.",
-    "Bảo toàn chất lượng PBR 2048x1024 siêu nét: Xuất mô hình chuẩn glTF 2.0 PBR (roughness=0.6, metalness=0.05) tương thích 100% với Xem File 3D, Blender, Unreal Engine và Unity."
+    "Tích hợp Động cơ đám mây Meshy.ai Cloud (Hoàn hảo 100%): Cho phép tạo mô hình 3D đỉnh cao thế giới ngay trong AI 3D Studio với màu sắc chân thực, gương mặt sắc nét và vật liệu PBR 360° chuẩn xác 100% như ảnh gốc.",
+    "Hỗ trợ đầy đủ Từ Hình Ảnh (Image-to-3D) và Từ Văn Bản (Text-to-3D) qua cụm siêu máy tính GPU NVIDIA A100 của Meshy.ai.",
+    "Giao diện quản lý & cấu hình Meshy API Key tiện lợi: Nút cài đặt '🔑 Meshy API' trên thanh Header và hộp thoại hướng dẫn đăng ký/lấy API Key miễn phí với 1 click.",
+    "Tự động tải về và lưu trữ mô hình GLB, OBJ, hình thu nhỏ chất lượng cao trực tiếp vào thư mục dự án và Thư viện 3D Studio.",
+    "Bảo toàn 100% sức mạnh Offline của 2 động cơ cục bộ RTX Đẳng Cấp (Hunyuan3D Turbo) và RTX Siêu Tốc (TripoSR) trên GPU RTX 3050 khi không có mạng.",
+    "Bổ sung bộ lọc và huy hiệu nhận diện Meshy Cloud trong Thư viện 3D, hỗ trợ xem xoay 360° và xuất file ngay lập tức."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.4/update_v2.0.4.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.4/update_v2.0.4.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.4/update_v2.0.4.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.5/update_v2.0.5.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.5/update_v2.0.5.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.5/update_v2.0.5.zip"
 }
