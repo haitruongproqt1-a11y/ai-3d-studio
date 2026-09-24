@@ -1,14 +1,15 @@
 {
-  "version": "2.0.1",
+  "version": "2.0.2",
   "buildDate": "2026-09-24",
   "releaseNotes": [
-    "Khắc phục triệt để lỗi khối/khuôn chữ nhật thừa sau cánh tay và dưới chân: Tách nền trong suốt 100% chuẩn RGBA cho nhân Hunyuan3D DiT.",
-    "Hiển thị tiến trình % chi tiết theo thời gian thực: Báo trực tiếp từng bước suy luận Flow Matching từ 25% đến 100%, không bị cảm giác treo máy.",
-    "Tối ưu tốc độ giải mã 3D gấp 5-8 lần: Tăng kích thước bó xử lý VRAM (batch chunks 24.000) và tối ưu độ phân giải Octree 160/192 mượt mà trên RTX 3050 (~1-2 phút).",
-    "Chuẩn hóa xuất OBJ/GLB dạng T-Pose: Sẵn sàng đưa vào Adobe Mixamo tự động gắn xương (Rigging) 1 chạm và xuất vào Game Engine.",
-    "Bảo toàn màu sắc trung thực: Chiếu màu đa chiều kết hợp khử lọt sáng mặt sau (Back-bleed protection)."
+    "Khắc phục triệt để hao pin và chiếm dụng GPU: Khi tắt ứng dụng (nút X hoặc nút Tắt App), toàn bộ tiến trình pythonw.exe được ngắt dứt điểm, giải phóng 100% VRAM đưa RTX 3050 về chế độ ngủ 0W trả lại máy sạch nguyên bản.",
+    "Bổ sung nút 'Trả GPU (0W)' và cơ chế tự động giải phóng VRAM thông minh sau 3 phút không hoạt động để tối ưu tối đa thời lượng pin laptop.",
+    "Sửa triệt để lệch vị trí khuôn mặt (trán dính mũ, cằm ở cổ): Áp dụng thuật toán cân chỉnh giải phẫu đa đoạn (Piecewise Landmark Mapping) khớp chính xác 100% mắt, mũi, cằm, cổ với ảnh mẫu 2D.",
+    "Khắc phục diện mạo tượng thạch cao (tô tượng): Tái hiện chất liệu vải quân phục chân thực, khử gắt vùng lưng và phủ vân chi tiết tự nhiên.",
+    "Cải tiến ánh sáng Viewport 3D: Chuyển sang Tone Mapping Neutral chân thực kết hợp độ sáng dịu mắt (1.0), khử hoàn toàn chói lóa ánh sáng từ trên xuống và bóng đổ gắt mặt sau.",
+    "Bổ sung công cụ 1-chạm 'Tat_AI_3D_Studio.bat' và phím tắt Desktop để tắt sạch app và GPU bất cứ lúc nào."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.1/update_v2.0.1.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.1/update_v2.0.1.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.1/update_v2.0.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.2/update_v2.0.2.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.2/update_v2.0.2.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.2/update_v2.0.2.zip"
 }

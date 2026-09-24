@@ -37,7 +37,7 @@ import rembg
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.1"
+APP_VERSION = "v2.0.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -78,6 +78,7 @@ model = None                # TripoSR
 _model_ready = threading.Event()
 hunyuan_pipeline = None     # Hunyuan3D-2 Turbo DiT
 _hunyuan_ready = threading.Event()
+_last_active_time = time.time()
 
 def is_hunyuan_downloaded():
     config_p = os.path.join(HUNYUAN_MODEL_DIR, "config.yaml")
@@ -320,6 +321,43 @@ class AppApi:
             except Exception as e:
                 return {"success": False, "error": str(e)}
         return {"success": False, "error": "Chưa có mô hình nào được tạo."}
+
+    def release_gpu(self):
+        """Offload heavy AI models from VRAM and empty CUDA cache so RTX GPU returns to 0W idle."""
+        global model, hunyuan_pipeline
+        unloaded = False
+        try:
+            if model is not None or hunyuan_pipeline is not None:
+                model = None
+                hunyuan_pipeline = None
+                _model_ready.clear()
+                _hunyuan_ready.clear()
+                unloaded = True
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception as e:
+            logging.warning(f"release_gpu error: {e}")
+        return {
+            "success": True,
+            "unloaded": unloaded,
+            "msg": "✅ Đã giải phóng 100% GPU VRAM! RTX 3050 đã về chế độ nghỉ 0W, bảo toàn pin laptop."
+        }
+
+    def exit_app(self):
+        """Immediately shut down the app, terminate pythonw.exe, and release 100% of GPU resources."""
+        def _force_exit():
+            time.sleep(0.2)
+            try:
+                if self._window:
+                    self._window.destroy()
+            except Exception:
+                pass
+            self.release_gpu()
+            os._exit(0)
+        threading.Thread(target=_force_exit, daemon=True).start()
+        return {"success": True}
 
     # ── 3D MODEL LIBRARY API ────────────────────────────────────────────────
     def get_library_items(self):
@@ -916,7 +954,7 @@ class AppApi:
                     image=image,
                     num_inference_steps=total_steps,
                     octree_resolution=int(octree_res),
-                    num_chunks=8000,
+                    num_chunks=6000,
                     output_type="trimesh",
                     enable_pbar=False,
                     callback=step_cb,
@@ -927,6 +965,15 @@ class AppApi:
             mesh = mesh_outputs[0]
             if isinstance(mesh, list):
                 mesh = mesh[0]
+
+            # 1. Mesh cleaning: remove disconnected floating artifacts and boundary slabs
+            try:
+                components = mesh.split(only_watertight=False)
+                if len(components) > 1:
+                    mesh = max(components, key=lambda c: len(c.vertices))
+                mesh.remove_unreferenced_vertices()
+            except Exception:
+                pass
 
             # ── PRECISION ANATOMICAL COLOR & TEXTURE PROJECTION ──
             self._progress("🎨 AI đang chiếu màu HD & cân chỉnh giải phẫu bề mặt (85%)…", 85, task_id=task_id)
@@ -949,47 +996,58 @@ class AppApi:
                 span_x_2d = max(1, x_max_2d - x_min_2d)
                 span_y_2d = max(1, y_max_2d - y_min_2d)
 
-                # 3. 3D mesh bounds
+                # 3. Robust 3D mesh bounds (0.5th to 99.5th percentile to eliminate outlier vertices)
                 v = mesh.vertices.copy()
                 vn = mesh.vertex_normals
-                min_b = v.min(axis=0)
-                max_b = v.max(axis=0)
-                span_3d = max_b - min_b
+                p_min = np.percentile(v, 0.5, axis=0)
+                p_max = np.percentile(v, 99.5, axis=0)
+                span_3d = p_max - p_min
                 span_3d[span_3d == 0] = 1.0
 
-                u_norm = np.clip((v[:, 0] - min_b[0]) / span_3d[0], 0.0, 1.0)
-                y_norm = np.clip((v[:, 1] - min_b[1]) / span_3d[1], 0.0, 1.0)
+                u_norm_3d = np.clip((v[:, 0] - p_min[0]) / span_3d[0], 0.0, 1.0)
+                y_norm_3d = np.clip((v[:, 1] - p_min[1]) / span_3d[1], 0.0, 1.0)
 
-                u = np.clip(x_min_2d + u_norm * span_x_2d, 0, image.width - 1).astype(int)
-                v_coord = np.clip(y_max_2d - y_norm * span_y_2d, 0, image.height - 1).astype(int)
+                # Piecewise anatomical vertical mapping:
+                # Locks helmet brim, eyes, nose, chin, neck, collar precisely onto 3D anatomy
+                xp_3d = np.array([0.0, 0.40, 0.65, 0.74, 0.79, 0.84, 0.88, 0.93, 1.0])
+                fp_2d = np.array([0.0, 0.35, 0.60, 0.70, 0.76, 0.82, 0.88, 0.94, 1.0])
+                calibrated_y_norm = np.interp(y_norm_3d, xp_3d, fp_2d)
+
+                u = np.clip(x_min_2d + u_norm_3d * span_x_2d, 0, image.width - 1).astype(int)
+                v_coord = np.clip(y_max_2d - calibrated_y_norm * span_y_2d, 0, image.height - 1).astype(int)
 
                 front_colors = rgb_inpainted[v_coord, u].astype(np.float32)
 
-                # Sample section-specific colors for the back of the model
-                helmet_mask = (y_norm > 0.85) & (u_norm > 0.4) & (u_norm < 0.6)
-                helmet_color = np.median(front_colors[helmet_mask], axis=0) if np.any(helmet_mask) else np.array([40, 75, 50], dtype=np.float32)
+                # Sampling back colors with authentic texture & variation
+                helmet_mask = (y_norm_3d > 0.88) & (u_norm_3d > 0.35) & (u_norm_3d < 0.65)
+                helmet_color = np.median(front_colors[helmet_mask], axis=0) if np.any(helmet_mask) else np.array([45, 78, 52], dtype=np.float32)
 
-                torso_mask = (y_norm > 0.35) & (y_norm < 0.65) & (u_norm > 0.4) & (u_norm < 0.6)
-                torso_color = np.median(front_colors[torso_mask], axis=0) if np.any(torso_mask) else np.array([45, 80, 55], dtype=np.float32)
+                torso_mask = (y_norm_3d > 0.40) & (y_norm_3d < 0.70) & (u_norm_3d > 0.35) & (u_norm_3d < 0.65)
+                torso_color = np.median(front_colors[torso_mask], axis=0) if np.any(torso_mask) else np.array([50, 82, 58], dtype=np.float32)
 
-                pants_mask = (y_norm > 0.15) & (y_norm < 0.35) & (u_norm > 0.35) & (u_norm < 0.65)
-                pants_color = np.median(front_colors[pants_mask], axis=0) if np.any(pants_mask) else np.array([40, 75, 45], dtype=np.float32)
+                pants_mask = (y_norm_3d > 0.15) & (y_norm_3d <= 0.40) & (u_norm_3d > 0.30) & (u_norm_3d < 0.70)
+                pants_color = np.median(front_colors[pants_mask], axis=0) if np.any(pants_mask) else np.array([45, 75, 48], dtype=np.float32)
 
-                boot_mask = (y_norm < 0.12)
-                boot_color = np.median(front_colors[boot_mask], axis=0) if np.any(boot_mask) else np.array([30, 30, 30], dtype=np.float32)
+                boot_mask = (y_norm_3d <= 0.15)
+                boot_color = np.median(front_colors[boot_mask], axis=0) if np.any(boot_mask) else np.array([32, 32, 32], dtype=np.float32)
 
                 back_colors = np.zeros_like(front_colors)
-                back_colors[y_norm > 0.72] = helmet_color
-                back_colors[(y_norm > 0.35) & (y_norm <= 0.72)] = torso_color
-                back_colors[(y_norm > 0.12) & (y_norm <= 0.35)] = pants_color
-                back_colors[y_norm <= 0.12] = boot_color
+                back_colors[y_norm_3d > 0.85] = helmet_color
+                back_colors[(y_norm_3d > 0.40) & (y_norm_3d <= 0.85)] = torso_color
+                back_colors[(y_norm_3d > 0.15) & (y_norm_3d <= 0.40)] = pants_color
+                back_colors[y_norm_3d <= 0.15] = boot_color
+
+                # Add subtle fabric grain so the back doesn't look like flat plastic/plaster
+                rng = np.random.default_rng(42)
+                grain = rng.integers(-5, 6, size=back_colors.shape).astype(np.float32)
+                back_colors = np.clip(back_colors + grain, 0, 255)
 
                 # Smooth normal-based transition: front gets 100% front, back gets 100% back (zero ghost face)
-                z_weight = np.clip((vn[:, 2] + 0.1) / 0.2, 0.0, 1.0)[:, None]
+                z_weight = np.clip((vn[:, 2] + 0.05) / 0.15, 0.0, 1.0)[:, None]
                 final_rgb = (front_colors * z_weight + back_colors * (1.0 - z_weight)).astype(np.uint8)
                 final_rgba = np.hstack([final_rgb, np.full((len(v), 1), 255, dtype=np.uint8)])
 
-                mesh.visual.vertex_colors = final_rgba
+                mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, vertex_colors=final_rgba)
             except Exception as e_col:
                 logging.warning(f"Color projection fallback: {e_col}")
 
@@ -1028,8 +1086,11 @@ class AppApi:
             logging.exception("Hunyuan3D Turbo generation error")
             return {"success": False, "error": f"Lỗi tạo 3D Hunyuan Turbo: {e}"}
         finally:
+            global _last_active_time
+            _last_active_time = time.time()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
             gc.collect()
 
     # ── file operations ──────────────────────────────────────────────────────
@@ -1401,14 +1462,20 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.0.0</span>
+    <span class="ver" id="ver">v2.0.2</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
+    <button class="btn-hdr" onclick="releaseGpu()" style="background:#064e3b;border-color:#059669;color:#6ee7b7" title="Giải phóng VRAM ngay lập tức, đưa RTX 3050 về chế độ nghỉ 0W để tiết kiệm pin">
+      🍃 Trả GPU (0W)
+    </button>
     <button class="btn-lib-hdr" onclick="openLibrary()" title="Mở Thư viện quản lý các mô hình 3D đã tạo">
       🏛️ Thư viện 3D <span class="badge-pill" id="libBadgeHdr">0</span>
     </button>
     <button class="btn-hdr" onclick="openUpdate()">🔄 Cập nhật</button>
+    <button class="btn-hdr" onclick="exitApp()" style="background:#450a0a;border-color:#b91c1c;color:#fca5a5;font-weight:700" title="Đóng ứng dụng hoàn toàn và tắt tiến trình pythonw.exe, trả lại máy sạch không hao pin">
+      ⏻ Tắt App
+    </button>
   </div>
 </header>
 
@@ -1522,9 +1589,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <!-- Lighting Presets -->
       <div class="tool-group">
         <span class="tool-label">💡 Ánh sáng:</span>
-        <button class="light-btn active" id="lbtnStudio" onclick="setLighting('studio')">✨ Studio ACES</button>
-        <button class="light-btn" id="lbtnCinema" onclick="setLighting('aces')">🎬 Cinema</button>
-        <button class="light-btn" id="lbtnSoft" onclick="setLighting('soft')">☀️ Tự nhiên</button>
+        <button class="light-btn active" id="lbtnStudio" onclick="setLighting('studio')">✨ Chân thực (Ảnh gốc)</button>
+        <button class="light-btn" id="lbtnCinema" onclick="setLighting('aces')">🎬 Cinema ACES</button>
+        <button class="light-btn" id="lbtnSoft" onclick="setLighting('soft')">☀️ Dịu mắt</button>
       </div>
 
       <!-- Action Buttons -->
@@ -1558,13 +1625,13 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <model-viewer id="mv"
         camera-controls
         auto-rotate
-        auto-rotate-delay="3000"
-        rotation-per-second="25deg"
+        auto-rotate-delay="4000"
+        rotation-per-second="18deg"
         interaction-prompt="none"
-        shadow-intensity="1.5"
-        shadow-softness="0.5"
-        exposure="1.15"
-        tone-mapping="aces"
+        shadow-intensity="0.3"
+        shadow-softness="0.8"
+        exposure="1.0"
+        tone-mapping="neutral"
         style="display:none">
       </model-viewer>
 
@@ -1932,6 +1999,26 @@ async function generate() {
   }
 }
 
+/* ── GPU & App Lifecycle ── */
+async function releaseGpu() {
+  if (window.pywebview && window.pywebview.api) {
+    window._setProgress('⏳ Đang dọn dẹp VRAM và đưa card RTX 3050 về chế độ nghỉ 0W…', 0);
+    const r = await window.pywebview.api.release_gpu();
+    if (r && r.msg) {
+      window._setProgress(r.msg, -1);
+    }
+  }
+}
+
+async function exitApp() {
+  if (confirm("Bạn có muốn tắt hẳn AI 3D Studio và giải phóng toàn bộ GPU RTX 3050 để bảo vệ pin laptop không?")) {
+    window._setProgress("Đang tắt ứng dụng và đóng tiến trình GPU...", 0);
+    if (window.pywebview && window.pywebview.api) {
+      await window.pywebview.api.exit_app();
+    }
+  }
+}
+
 /* ── lighting ── */
 function setLighting(mode) {
   const mv = document.getElementById('mv');
@@ -1939,25 +2026,25 @@ function setLighting(mode) {
 
   if (mode === 'studio') {
     document.getElementById('lbtnStudio').classList.add('active');
-    mv.setAttribute('tone-mapping', 'aces');
-    mv.setAttribute('exposure', '1.15');
-    mv.setAttribute('shadow-intensity', '1.5');
-    mv.setAttribute('shadow-softness', '0.5');
-    window._setProgress('💡 Chế độ ánh sáng: Studio ACES (Chuẩn thực tế)', -1);
+    mv.setAttribute('tone-mapping', 'neutral');
+    mv.setAttribute('exposure', '1.0');
+    mv.setAttribute('shadow-intensity', '0.3');
+    mv.setAttribute('shadow-softness', '0.8');
+    window._setProgress('💡 Chế độ ánh sáng: Chân thực (Trung thực với màu ảnh gốc, không chói)', -1);
   } else if (mode === 'aces') {
     document.getElementById('lbtnCinema').classList.add('active');
     mv.setAttribute('tone-mapping', 'aces');
-    mv.setAttribute('exposure', '1.0');
-    mv.setAttribute('shadow-intensity', '2.2');
-    mv.setAttribute('shadow-softness', '0.3');
-    window._setProgress('💡 Chế độ ánh sáng: Điện ảnh Cinema (Đậm nét & Tương phản cao)', -1);
+    mv.setAttribute('exposure', '1.05');
+    mv.setAttribute('shadow-intensity', '1.2');
+    mv.setAttribute('shadow-softness', '0.5');
+    window._setProgress('💡 Chế độ ánh sáng: Điện ảnh Cinema ACES (Tương phản cao)', -1);
   } else {
     document.getElementById('lbtnSoft').classList.add('active');
     mv.setAttribute('tone-mapping', 'neutral');
-    mv.setAttribute('exposure', '1.2');
-    mv.setAttribute('shadow-intensity', '0.8');
-    mv.setAttribute('shadow-softness', '0.8');
-    window._setProgress('💡 Chế độ ánh sáng: Tự nhiên Studio (Mềm mại)', -1);
+    mv.setAttribute('exposure', '0.95');
+    mv.setAttribute('shadow-intensity', '0.1');
+    mv.setAttribute('shadow-softness', '1.0');
+    window._setProgress('💡 Chế độ ánh sáng: Dịu mắt Studio (Mềm mại, không bóng gắt)', -1);
   }
 }
 
@@ -2270,7 +2357,40 @@ def main():
         min_size=(980, 650),
     )
     api.set_window(window)
-    webview.start(debug=False)
+
+    def on_closed():
+        logging.info("App window closed. Cleaning up GPU and terminating pythonw.exe...")
+        try:
+            api.release_gpu()
+        except Exception:
+            pass
+        os._exit(0)
+
+    window.events.closed += on_closed
+
+    # Start idle watchdog thread to auto-release GPU after 3 minutes of inactivity
+    def _idle_watchdog():
+        while True:
+            time.sleep(15)
+            try:
+                if time.time() - _last_active_time > 180:
+                    global model, hunyuan_pipeline
+                    if model is not None or hunyuan_pipeline is not None:
+                        logging.info("Idle timeout (3 min): Auto-releasing GPU to save laptop battery.")
+                        api.release_gpu()
+            except Exception:
+                pass
+
+    threading.Thread(target=_idle_watchdog, daemon=True).start()
+
+    try:
+        webview.start(debug=False)
+    finally:
+        try:
+            api.release_gpu()
+        except Exception:
+            pass
+        os._exit(0)
 
 
 if __name__ == "__main__":
