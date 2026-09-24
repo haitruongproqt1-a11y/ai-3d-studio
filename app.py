@@ -37,7 +37,7 @@ import rembg
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.2"
+APP_VERSION = "v2.0.3"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -808,59 +808,15 @@ class AppApi:
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
 
-            # ── HD UV ATLAS TEXTURE BAKING (1024x1024) ──
+            # ── MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
             if do_bake:
-                self._progress("🎨 AI đang trải UV & nướng vân Atlas 1024x1024 HD…", 65, task_id=task_id)
-                mesh_trimesh = meshes[0]
+                self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 65, task_id=task_id)
                 try:
-                    import xatlas
-                    v = mesh_trimesh.vertices
-                    f = mesh_trimesh.faces
-                    atlas = xatlas.Atlas()
-                    atlas.add_mesh(v, f)
-                    chart_options = xatlas.ChartOptions()
-                    chart_options.max_iterations = 2
-                    pack_options = xatlas.PackOptions()
-                    pack_options.width = 1024
-                    pack_options.height = 1024
-                    pack_options.padding = 2
-                    atlas.generate(chart_options=chart_options, pack_options=pack_options)
-                    vmapping, indices, uvs = atlas[0]
-
-                    v_cam = vmapping.copy()
-                    zs = v[v_cam, 2]
-                    v_cam = v_cam[np.argsort(zs)]
-                    u_coords = np.clip(((v[v_cam, 0] + 0.5) * 1023), 0, 1023).astype(int)
-                    v_coords = np.clip(((1.0 - (v[v_cam, 1] + 0.5)) * 1023), 0, 1023).astype(int)
-
-                    img_arr = np.array(image.resize((1024, 1024), Image.Resampling.LANCZOS))
-                    colors = img_arr[v_coords, u_coords]
-
-                    tex_img = np.full((1024, 1024, 3), 128, dtype=np.uint8)
-                    tex_u = np.clip((uvs[np.argsort(zs), 0] * 1023), 0, 1023).astype(int)
-                    tex_v = np.clip(((1.0 - uvs[np.argsort(zs), 1]) * 1023), 0, 1023).astype(int)
-                    tex_img[tex_v, tex_u] = colors[:, :3]
-
-                    mask = np.any(tex_img != 128, axis=-1).astype(np.uint8)
-                    tex_img = cv2.inpaint(tex_img, 1 - mask, 3, cv2.INPAINT_TELEA)
-
-                    pil_tex = Image.fromarray(tex_img)
-                    pil_tex = enhance_texture(pil_tex)
-
-                    material = trimesh.visual.material.PBRMaterial(
-                        baseColorTexture=pil_tex,
-                        roughnessFactor=0.45,
-                        metallicFactor=0.08,
-                    )
-                    baked_mesh = trimesh.Trimesh(
-                        vertices=v[vmapping],
-                        faces=indices,
-                        visual=trimesh.visual.TextureVisuals(uv=uvs, material=material),
-                        process=False,
-                    )
+                    from texture_engine import bake_meshy_pbr_mesh
+                    baked_mesh, _ = bake_meshy_pbr_mesh(meshes[0], image)
                     meshes = [baked_mesh]
                 except Exception as e_bake:
-                    logging.warning(f"Bake texture fallback: {e_bake}")
+                    logging.warning(f"Meshy PBR Texture Engine fallback: {e_bake}")
 
             self._progress("💾 Đang xuất tệp mô hình GLB và OBJ…", 88, task_id=task_id)
             meshes[0].export(glb_path)
@@ -975,81 +931,13 @@ class AppApi:
             except Exception:
                 pass
 
-            # ── PRECISION ANATOMICAL COLOR & TEXTURE PROJECTION ──
-            self._progress("🎨 AI đang chiếu màu HD & cân chỉnh giải phẫu bề mặt (85%)…", 85, task_id=task_id)
+            # ── MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
+            self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 85, task_id=task_id)
             try:
-                img_np = np.array(image.convert("RGBA"))
-                alpha = img_np[:, :, 3]
-
-                # 1. Inpaint transparent background so silhouette edges never sample black
-                mask = (alpha < 50).astype(np.uint8)
-                rgb_inpainted = cv2.inpaint(img_np[:, :, :3], mask, 7, cv2.INPAINT_TELEA)
-
-                # 2. Get exact subject bounding box in 2D
-                coords = np.nonzero(alpha > 50)
-                if len(coords[0]) > 0:
-                    y_min_2d, y_max_2d = coords[0].min(), coords[0].max()
-                    x_min_2d, x_max_2d = coords[1].min(), coords[1].max()
-                else:
-                    y_min_2d, y_max_2d = 0, img_np.shape[0] - 1
-                    x_min_2d, x_max_2d = 0, img_np.shape[1] - 1
-                span_x_2d = max(1, x_max_2d - x_min_2d)
-                span_y_2d = max(1, y_max_2d - y_min_2d)
-
-                # 3. Robust 3D mesh bounds (0.5th to 99.5th percentile to eliminate outlier vertices)
-                v = mesh.vertices.copy()
-                vn = mesh.vertex_normals
-                p_min = np.percentile(v, 0.5, axis=0)
-                p_max = np.percentile(v, 99.5, axis=0)
-                span_3d = p_max - p_min
-                span_3d[span_3d == 0] = 1.0
-
-                u_norm_3d = np.clip((v[:, 0] - p_min[0]) / span_3d[0], 0.0, 1.0)
-                y_norm_3d = np.clip((v[:, 1] - p_min[1]) / span_3d[1], 0.0, 1.0)
-
-                # Piecewise anatomical vertical mapping:
-                # Locks helmet brim, eyes, nose, chin, neck, collar precisely onto 3D anatomy
-                xp_3d = np.array([0.0, 0.40, 0.65, 0.74, 0.79, 0.84, 0.88, 0.93, 1.0])
-                fp_2d = np.array([0.0, 0.35, 0.60, 0.70, 0.76, 0.82, 0.88, 0.94, 1.0])
-                calibrated_y_norm = np.interp(y_norm_3d, xp_3d, fp_2d)
-
-                u = np.clip(x_min_2d + u_norm_3d * span_x_2d, 0, image.width - 1).astype(int)
-                v_coord = np.clip(y_max_2d - calibrated_y_norm * span_y_2d, 0, image.height - 1).astype(int)
-
-                front_colors = rgb_inpainted[v_coord, u].astype(np.float32)
-
-                # Sampling back colors with authentic texture & variation
-                helmet_mask = (y_norm_3d > 0.88) & (u_norm_3d > 0.35) & (u_norm_3d < 0.65)
-                helmet_color = np.median(front_colors[helmet_mask], axis=0) if np.any(helmet_mask) else np.array([45, 78, 52], dtype=np.float32)
-
-                torso_mask = (y_norm_3d > 0.40) & (y_norm_3d < 0.70) & (u_norm_3d > 0.35) & (u_norm_3d < 0.65)
-                torso_color = np.median(front_colors[torso_mask], axis=0) if np.any(torso_mask) else np.array([50, 82, 58], dtype=np.float32)
-
-                pants_mask = (y_norm_3d > 0.15) & (y_norm_3d <= 0.40) & (u_norm_3d > 0.30) & (u_norm_3d < 0.70)
-                pants_color = np.median(front_colors[pants_mask], axis=0) if np.any(pants_mask) else np.array([45, 75, 48], dtype=np.float32)
-
-                boot_mask = (y_norm_3d <= 0.15)
-                boot_color = np.median(front_colors[boot_mask], axis=0) if np.any(boot_mask) else np.array([32, 32, 32], dtype=np.float32)
-
-                back_colors = np.zeros_like(front_colors)
-                back_colors[y_norm_3d > 0.85] = helmet_color
-                back_colors[(y_norm_3d > 0.40) & (y_norm_3d <= 0.85)] = torso_color
-                back_colors[(y_norm_3d > 0.15) & (y_norm_3d <= 0.40)] = pants_color
-                back_colors[y_norm_3d <= 0.15] = boot_color
-
-                # Add subtle fabric grain so the back doesn't look like flat plastic/plaster
-                rng = np.random.default_rng(42)
-                grain = rng.integers(-5, 6, size=back_colors.shape).astype(np.float32)
-                back_colors = np.clip(back_colors + grain, 0, 255)
-
-                # Smooth normal-based transition: front gets 100% front, back gets 100% back (zero ghost face)
-                z_weight = np.clip((vn[:, 2] + 0.05) / 0.15, 0.0, 1.0)[:, None]
-                final_rgb = (front_colors * z_weight + back_colors * (1.0 - z_weight)).astype(np.uint8)
-                final_rgba = np.hstack([final_rgb, np.full((len(v), 1), 255, dtype=np.uint8)])
-
-                mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, vertex_colors=final_rgba)
+                from texture_engine import bake_meshy_pbr_mesh
+                mesh, _ = bake_meshy_pbr_mesh(mesh, image)
             except Exception as e_col:
-                logging.warning(f"Color projection fallback: {e_col}")
+                logging.exception(f"Meshy PBR Texture Engine error: {e_col}")
 
             self._progress("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét (95%)…", 95, task_id=task_id)
             glb_path = os.path.join(item_dir, "model.glb")
@@ -1462,7 +1350,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.0.2</span>
+    <span class="ver" id="ver">v2.0.3</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>

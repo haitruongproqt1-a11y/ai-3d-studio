@@ -11,6 +11,7 @@ version = v_data.get("version", "2.0.0")
 
 files_to_pack = [
     "app.py",
+    "texture_engine.py",
     "version.json",
     "Chay_AI_3D_Studio.bat",
     "Tat_AI_3D_Studio.bat",
