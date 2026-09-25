@@ -39,7 +39,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.6"
+APP_VERSION = "v2.0.7"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -600,6 +600,9 @@ class AppApi:
 
     # ── image picker ────────────────────────────────────────────────────────
     def select_image(self):
+        return self.select_multi_image("front")
+
+    def select_multi_image(self, slot="front"):
         if not self._window:
             return None
         types = ("Image Files (*.png;*.jpg;*.jpeg;*.webp)", "All Files (*.*)")
@@ -612,9 +615,9 @@ class AppApi:
                 ext = os.path.splitext(fp)[1].lower().lstrip(".")
                 if ext == "jpg":
                     ext = "jpeg"
-                return {"path": fp, "dataUrl": f"data:image/{ext};base64,{b64}", "name": os.path.basename(fp)}
+                return {"slot": slot, "path": fp, "dataUrl": f"data:image/{ext};base64,{b64}", "name": os.path.basename(fp)}
             except Exception as e:
-                return {"error": str(e)}
+                return {"slot": slot, "error": str(e)}
         return None
 
     # ── live progress helper ─────────────────────────────────────────────────
@@ -640,7 +643,9 @@ class AppApi:
     def start_generate_3d(self, file_path, engine="turbo",
                           mc_resolution=None, bake_tex=False,
                           smooth=True, quality="pbr_1024",
-                          num_steps=10, octree_res=160):
+                          num_steps=10, octree_res=160,
+                          back_image=None, left_image=None, right_image=None,
+                          color_mode="color"):
         task_id = str(time.time_ns())
         self._tasks[task_id] = {
             "status": "running", "msg": "Đang khởi động tiến trình GPU…",
@@ -652,7 +657,10 @@ class AppApi:
                 res = self.generate_3d(
                     file_path, engine=engine, mc_resolution=mc_resolution,
                     bake_tex=bake_tex, smooth=smooth, quality=quality,
-                    num_steps=num_steps, octree_res=octree_res, task_id=task_id
+                    num_steps=num_steps, octree_res=octree_res,
+                    back_image=back_image, left_image=left_image, right_image=right_image,
+                    color_mode=color_mode,
+                    task_id=task_id
                 )
                 if res.get("success"):
                     self._tasks[task_id] = {"status": "done", "msg": "Hoàn tất!", "pct": 100, "result": res}
@@ -666,7 +674,8 @@ class AppApi:
         return {"task_id": task_id}
 
     def start_generate_from_text(self, prompt, engine="turbo", quality="pbr_1024",
-                                 smooth=True, num_steps=10, octree_res=160):
+                                 smooth=True, num_steps=10, octree_res=160,
+                                 color_mode="color"):
         task_id = str(time.time_ns())
         self._tasks[task_id] = {
             "status": "running", "msg": "Đang phân tích câu lệnh văn bản…",
@@ -677,7 +686,9 @@ class AppApi:
             try:
                 res = self.generate_from_text(
                     prompt, engine=engine, quality=quality, smooth=smooth,
-                    num_steps=num_steps, octree_res=octree_res, task_id=task_id
+                    num_steps=num_steps, octree_res=octree_res,
+                    color_mode=color_mode,
+                    task_id=task_id
                 )
                 if res.get("success"):
                     self._tasks[task_id] = {"status": "done", "msg": "Hoàn tất!", "pct": 100, "result": res}
@@ -779,26 +790,26 @@ class AppApi:
             if engine == "meshy":
                 self._progress("✨ Đưa hình phác họa vào Meshy AI Cloud tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_meshy_cloud(
-                    concept_file, enable_pbr=True,
-                    target_dir=item_dir, task_id=task_id
+                    concept_file, enable_pbr=(color_mode != "clay"),
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
             elif engine == "hffree":
                 self._progress("🌐 Đưa hình phác họa vào Hugging Face Cloud Free tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hf_free_cloud(
                     concept_file, num_steps=num_steps, octree_res=octree_res,
-                    target_dir=item_dir, task_id=task_id
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
             elif engine in ("turbo", "hunyuan3d"):
                 self._progress("🐉 Đưa hình phác họa vào RTX Hunyuan3D Turbo tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hunyuan3d_turbo(
                     concept_file, num_steps=num_steps, octree_res=octree_res,
-                    target_dir=item_dir, task_id=task_id
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
             else:
                 self._progress("⚡ Đưa hình phác họa vào GPU RTX TripoSR tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_local(
                     concept_file, quality=quality, smooth=smooth,
-                    target_dir=item_dir, task_id=task_id
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
 
             if res.get("success"):
@@ -822,19 +833,31 @@ class AppApi:
     def generate_3d(self, file_path, engine="turbo",
                     mc_resolution=None, bake_tex=False,
                     smooth=True, quality="pbr_1024",
-                    num_steps=10, octree_res=160, task_id=None):
+                    num_steps=10, octree_res=160,
+                    back_image=None, left_image=None, right_image=None,
+                    color_mode="color", task_id=None):
         if engine == "meshy":
-            return self._gen_meshy_cloud(file_path, enable_pbr=True, task_id=task_id)
+            return self._gen_meshy_cloud(file_path, enable_pbr=(color_mode != "clay"), color_mode=color_mode, task_id=task_id)
         if engine == "hffree":
-            return self._gen_hf_free_cloud(file_path, num_steps=num_steps, octree_res=octree_res, task_id=task_id)
+            return self._gen_hf_free_cloud(
+                file_path, num_steps=num_steps, octree_res=octree_res,
+                back_image=back_image, left_image=left_image, right_image=right_image,
+                color_mode=color_mode, task_id=task_id
+            )
         if engine in ("turbo", "hunyuan3d"):
             return self._gen_hunyuan3d_turbo(
-                file_path, num_steps=num_steps, octree_res=octree_res, task_id=task_id
+                file_path, num_steps=num_steps, octree_res=octree_res,
+                back_image=back_image, left_image=left_image, right_image=right_image,
+                color_mode=color_mode, task_id=task_id
             )
-        return self._gen_local(file_path, quality=quality, smooth=smooth, task_id=task_id)
+        return self._gen_local(
+            file_path, quality=quality, smooth=smooth,
+            back_image=back_image, color_mode=color_mode, task_id=task_id
+        )
 
     # ── ENGINE 1: LOCAL FAST (RTX TRIPOSR ~15s) ──────────────────────────────
-    def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None, task_id=None):
+    def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None, task_id=None,
+                   back_image=None, color_mode="color"):
         global model, current_device
         if model is None or not _model_ready.is_set():
             self._progress("⏳ Đang nạp TripoSR vào GPU RTX 3050 (~15s)…", 5, task_id=task_id)
@@ -868,7 +891,7 @@ class AppApi:
             self._progress(f"⚙️ Tái tạo lưới Marching Cubes ({mc_res}x{mc_res} Voxels)…", 45, task_id=task_id)
             meshes = model.extract_mesh(
                 scene_codes,
-                has_vertex_color=(not do_bake),
+                has_vertex_color=(color_mode != "clay" and not do_bake),
                 resolution=mc_res,
             )
 
@@ -883,12 +906,23 @@ class AppApi:
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
 
-            # ── MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
-            if do_bake:
+            # ── CLAY SCULPTURE OR MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
+            if color_mode == "clay":
+                self._progress("🏛️ Đang hoàn thiện Tượng Thạch Cao Clay đơn sắc mịn màng…", 65, task_id=task_id)
+                try:
+                    from texture_engine import create_clay_sculpture_mesh
+                    meshes = [create_clay_sculpture_mesh(meshes[0])]
+                except Exception as e_cl:
+                    logging.warning(f"Clay sculpture error: {e_cl}")
+            elif do_bake:
                 self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 65, task_id=task_id)
                 try:
                     from texture_engine import bake_meshy_pbr_mesh
-                    baked_mesh, _ = bake_meshy_pbr_mesh(meshes[0], image)
+                    baked_mesh, _ = bake_meshy_pbr_mesh(
+                        meshes[0], image,
+                        back_image_source=back_image,
+                        color_mode="color"
+                    )
                     meshes = [baked_mesh]
                 except Exception as e_bake:
                     logging.warning(f"Meshy PBR Texture Engine fallback: {e_bake}")
@@ -901,10 +935,12 @@ class AppApi:
             self.last_obj = obj_path
             self.last_folder = item_dir
 
+            engine_used_name = "RTX Siêu Tốc (Thạch Cao Clay)" if color_mode == "clay" else "RTX Siêu Tốc (TripoSR)"
+
             _save_model_metadata(
                 item_dir,
                 name=os.path.splitext(os.path.basename(file_path))[0],
-                engine="RTX Siêu Tốc (TripoSR)",
+                engine=engine_used_name,
                 source="image",
                 input_img_path=file_path
             )
@@ -919,7 +955,7 @@ class AppApi:
                 "glb_path": glb_path,
                 "obj_path": obj_path,
                 "folder": item_dir,
-                "engine_used": "RTX Siêu Tốc (TripoSR)"
+                "engine_used": engine_used_name
             }
 
         except Exception as e:
@@ -927,7 +963,8 @@ class AppApi:
             return {"success": False, "error": f"Lỗi tạo 3D RTX: {e}"}
 
     # ── ENGINE 2: LOCAL REALISTIC (HUNYUAN3D-2 TURBO DIT FLOW MATCHING) ─────
-    def _gen_hunyuan3d_turbo(self, file_path, num_steps=10, octree_res=160, target_dir=None, task_id=None):
+    def _gen_hunyuan3d_turbo(self, file_path, num_steps=10, octree_res=160, target_dir=None, task_id=None,
+                             back_image=None, left_image=None, right_image=None, color_mode="color"):
         global hunyuan_pipeline
 
         if not is_hunyuan_downloaded():
@@ -1006,13 +1043,25 @@ class AppApi:
             except Exception:
                 pass
 
-            # ── MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
-            self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 85, task_id=task_id)
-            try:
-                from texture_engine import bake_meshy_pbr_mesh
-                mesh, _ = bake_meshy_pbr_mesh(mesh, image)
-            except Exception as e_col:
-                logging.exception(f"Meshy PBR Texture Engine error: {e_col}")
+            # ── CLAY SCULPTURE OR MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
+            if color_mode == "clay":
+                self._progress("🏛️ Đang tạo Tượng Thạch Cao Clay đơn sắc mịn màng…", 85, task_id=task_id)
+                try:
+                    from texture_engine import create_clay_sculpture_mesh
+                    mesh = create_clay_sculpture_mesh(mesh)
+                except Exception as e_clay:
+                    logging.exception(f"Clay sculpture error: {e_clay}")
+            else:
+                self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 85, task_id=task_id)
+                try:
+                    from texture_engine import bake_meshy_pbr_mesh
+                    mesh, _ = bake_meshy_pbr_mesh(
+                        mesh, image,
+                        back_image_source=back_image,
+                        color_mode="color"
+                    )
+                except Exception as e_col:
+                    logging.exception(f"Meshy PBR Texture Engine error: {e_col}")
 
             self._progress("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét (95%)…", 95, task_id=task_id)
             glb_path = os.path.join(item_dir, "model.glb")
@@ -1025,10 +1074,12 @@ class AppApi:
             self.last_obj = obj_path
             self.last_folder = item_dir
 
+            engine_used_name = "RTX Đẳng Cấp (Thạch Cao Clay)" if color_mode == "clay" else "RTX Đẳng Cấp (Hunyuan3D Turbo)"
+
             _save_model_metadata(
                 item_dir,
                 name=os.path.splitext(os.path.basename(file_path))[0],
-                engine="RTX Đẳng Cấp (Hunyuan3D Turbo)",
+                engine=engine_used_name,
                 source="image",
                 input_img_path=file_path
             )
@@ -1043,7 +1094,7 @@ class AppApi:
                 "glb_path": glb_path,
                 "obj_path": obj_path,
                 "folder": item_dir,
-                "engine_used": "RTX Đẳng Cấp (Hunyuan3D Turbo)"
+                "engine_used": engine_used_name
             }
         except Exception as e:
             logging.exception("Hunyuan3D Turbo generation error")
@@ -1057,7 +1108,7 @@ class AppApi:
             gc.collect()
 
     # ── ENGINE 3: MESHY.AI CLOUD (100% STUDIO GRADE MULTI-VIEW PBR) ──────────
-    def _gen_meshy_cloud(self, file_path, enable_pbr=True, target_dir=None, task_id=None):
+    def _gen_meshy_cloud(self, file_path, enable_pbr=True, target_dir=None, task_id=None, color_mode="color"):
         if not self.meshy_client.has_valid_key():
             return {
                 "success": False,
@@ -1088,14 +1139,28 @@ class AppApi:
             glb_path = paths["glb_path"]
             obj_path = paths["obj_path"]
 
+            # Convert to clay if requested
+            if color_mode == "clay":
+                try:
+                    import trimesh
+                    from texture_engine import create_clay_sculpture_mesh
+                    m = trimesh.load(glb_path, force="mesh")
+                    m = create_clay_sculpture_mesh(m)
+                    m.export(glb_path)
+                    m.export(obj_path)
+                except Exception as e_cl:
+                    logging.warning(f"Meshy clay conversion warning: {e_cl}")
+
             self.last_glb = glb_path
             self.last_obj = obj_path
             self.last_folder = item_dir
 
+            eng_name = "✨ Meshy AI Cloud (Thạch Cao Clay)" if color_mode == "clay" else "✨ Meshy AI Cloud (Hoàn Hảo 100%)"
+
             _save_model_metadata(
                 item_dir,
                 name=os.path.splitext(os.path.basename(file_path))[0],
-                engine="✨ Meshy AI Cloud (Hoàn Hảo 100%)",
+                engine=eng_name,
                 source="image",
                 input_img_path=file_path
             )
@@ -1110,14 +1175,15 @@ class AppApi:
                 "glb_path": glb_path,
                 "obj_path": obj_path,
                 "folder": item_dir,
-                "engine_used": "✨ Meshy AI Cloud (Hoàn Hảo 100%)"
+                "engine_used": eng_name
             }
         except Exception as e:
             logging.exception("_gen_meshy_cloud error")
             return {"success": False, "error": f"Lỗi Meshy AI Cloud: {e}"}
 
     # ── ENGINE 4: HUGGING FACE FREE CLOUD (0 VNĐ API) ────────────────────────
-    def _gen_hf_free_cloud(self, file_path, num_steps=15, octree_res=256, target_dir=None, task_id=None):
+    def _gen_hf_free_cloud(self, file_path, num_steps=15, octree_res=256, target_dir=None, task_id=None,
+                           back_image=None, left_image=None, right_image=None, color_mode="color"):
         self._progress("🌐 Đang kết nối tới Hugging Face Cloud Free (0đ API)…", 10, task_id=task_id)
         try:
             from hf_free_client import HuggingFaceFreeClient
@@ -1132,7 +1198,11 @@ class AppApi:
                 progress_cb=_step_cb,
                 item_dir=target_dir,
                 steps=int(num_steps),
-                octree_res=int(octree_res)
+                octree_res=int(octree_res),
+                back_image_path=back_image,
+                left_image_path=left_image,
+                right_image_path=right_image,
+                color_mode=color_mode
             )
 
             if not res.get("success"):
@@ -1146,10 +1216,12 @@ class AppApi:
             self.last_obj = obj_path
             self.last_folder = item_dir
 
+            engine_name = res.get("engine_used", "🌐 Hugging Face Cloud Free (0đ)")
+
             _save_model_metadata(
                 item_dir,
                 name=os.path.splitext(os.path.basename(file_path))[0],
-                engine="🌐 Hugging Face Cloud Free (0đ)",
+                engine=engine_name,
                 source="image",
                 input_img_path=file_path
             )
@@ -1166,7 +1238,7 @@ class AppApi:
                 "obj_path": obj_path,
                 "glb_file": glb_path,
                 "obj_file": obj_path,
-                "engine_used": "🌐 Hugging Face Cloud Free (0đ)"
+                "engine_used": engine_name
             }
         except Exception as e:
             logging.exception("_gen_hf_free_cloud error")
@@ -1385,6 +1457,31 @@ header{height:52px;background:#131722;border-bottom:1px solid #232936;display:fl
 .src-tab{flex:1;padding:8px;border:none;border-radius:7px;background:transparent;color:#94a3b8;font-size:11.5px;font-weight:700;cursor:pointer;transition:.18s;display:flex;align-items:center;justify-content:center;gap:5px}
 .src-tab.active{background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.4)}
 
+/* ── Output Style Switcher (Color vs Clay) ── */
+.style-switcher{display:flex;background:#131825;padding:3px;border-radius:8px;border:1px solid #1e2638;gap:4px}
+.style-tab{flex:1;padding:6px 8px;border:none;border-radius:6px;background:transparent;color:#94a3b8;font-size:11px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;display:flex;align-items:center;justify-content:center;gap:5px}
+.style-tab.active{background:linear-gradient(135deg,#0284c7,#2563eb);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.35)}
+.style-tab.clay.active{background:linear-gradient(135deg,#57534e,#d97706);color:#fff;box-shadow:0 2px 8px rgba(217,119,6,.35)}
+
+/* ── View Mode Switcher (Single vs Multi-View) ── */
+.view-mode-bar{display:flex;background:#090d16;padding:2px;border-radius:7px;border:1px solid #1c2436;gap:4px;margin-bottom:6px}
+.view-tab{flex:1;padding:5px 6px;border:none;border-radius:5px;background:transparent;color:#64748b;font-size:10.5px;font-weight:700;cursor:pointer;transition:.15s;text-align:center}
+.view-tab.active{background:#1e293b;color:#38bdf8;border:1px solid #334155;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+
+/* ── Multi-View 4-slot grid ── */
+.mv-container{display:flex;flex-direction:column;gap:6px}
+.mv-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mv-slot{background:#111622;border:1px solid #1e2638;border-radius:8px;padding:6px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:4px}
+.mv-slot:hover{border-color:#38bdf8;background:#151c2c}
+.mv-label{font-size:9.5px;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mv-label.required{color:#60a5fa}
+.mv-label.recommended{color:#34d399}
+.mv-label.optional{color:#94a3b8}
+.mv-drop{height:68px;border:1px dashed #283548;border-radius:6px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;background:#090d16}
+.mv-drop img{width:100%;height:100%;object-fit:contain;display:none}
+.mv-hint{font-size:10px;color:#64748b;text-align:center;padding:4px}
+.mv-hint b{color:#93c5fd}
+
 /* ── 3 Engine Tabs: Meshy Cloud + 2 Local Offline RTX Engines ── */
 .tabs{display:grid;grid-template-columns:1.12fr 1fr 1fr;background:#07090e;padding:3px;border-radius:8px;border:1px solid #1e2433;gap:3px}
 .tab{padding:8px 4px;border:none;border-radius:6px;background:transparent;color:#64748b;font-size:10.5px;font-weight:700;cursor:pointer;transition:.15s;text-align:center;white-space:nowrap}
@@ -1582,6 +1679,12 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <button class="src-tab" id="srcTabTxt" onclick="switchSource('text')">✍️ Từ Văn Bản</button>
     </div>
 
+    <!-- Output Style Switcher: Full Color vs Clay Sculpture -->
+    <div class="style-switcher">
+      <button class="style-tab active" id="styleTabColor" onclick="switchStyle('color')" title="Tự động tô màu và tạo vân PBR 1:1 siêu nét từ ảnh">🎨 Đầy Đủ Màu Sắc PBR</button>
+      <button class="style-tab clay" id="styleTabClay" onclick="switchStyle('clay')" title="Tạo khối tượng điêu khắc thạch cao trắng mịn màng, tối ưu cho In 3D & tự tô màu bằng Blender">🏛️ Tượng Thạch Cao Clay (Blender)</button>
+    </div>
+
     <!-- 4 Engine tabs: Local Offline + Free Cloud + Meshy Pro -->
     <div class="tabs" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
       <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')" title="NVIDIA RTX 3050 Offline 100% - Không tốn tiền, không giới hạn, Khớp 1:1">🐉 RTX Đẳng Cấp</button>
@@ -1592,11 +1695,52 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
     <!-- 1. IMAGE MODE CONTAINER -->
     <div id="imageBox">
+      <!-- View mode switcher: Single vs Multi-view -->
+      <div class="view-mode-bar">
+        <button class="view-tab active" id="vTabSingle" onclick="switchViewMode('single')">1️⃣ Ảnh Đơn (Nhanh)</button>
+        <button class="view-tab" id="vTabMulti" onclick="switchViewMode('multi')">📸 Đa Góc Nhìn (Chuẩn 360°)</button>
+      </div>
+
+      <!-- Single view drop -->
       <div class="drop" id="drop" onclick="pickImage()">
         <img id="prev" alt="preview">
         <div class="drop-hint" id="dropHint">
           <b>Chọn ảnh 2D từ máy tính</b>
           <p>Nhấn để nạp ảnh PNG / JPG / WebP</p>
+        </div>
+      </div>
+
+      <!-- Multi view slots container -->
+      <div id="multiViewBox" style="display:none" class="mv-container">
+        <div class="mv-grid">
+          <div class="mv-slot" onclick="pickMultiSlot('front')" id="slotBoxFront">
+            <span class="mv-label required">Mặt Trước (Chính diện) *</span>
+            <div class="mv-drop" id="mvDropFront">
+              <img id="mvPrevFront" alt="Front">
+              <div class="mv-hint" id="mvHintFront"><b>+ Nạp ảnh trước</b></div>
+            </div>
+          </div>
+          <div class="mv-slot" onclick="pickMultiSlot('back')" id="slotBoxBack">
+            <span class="mv-label recommended">Mặt Sau (Lưng) ★ Khuyên dùng</span>
+            <div class="mv-drop" id="mvDropBack">
+              <img id="mvPrevBack" alt="Back">
+              <div class="mv-hint" id="mvHintBack"><b>+ Nạp ảnh sau lưng</b><p style="font-size:9px;color:#94a3b8;margin:2px 0 0">Khử 100% sai lệch lưng</p></div>
+            </div>
+          </div>
+          <div class="mv-slot" onclick="pickMultiSlot('left')" id="slotBoxLeft">
+            <span class="mv-label optional">Cạnh Trái (Tùy chọn)</span>
+            <div class="mv-drop" id="mvDropLeft">
+              <img id="mvPrevLeft" alt="Left">
+              <div class="mv-hint" id="mvHintLeft"><b>+ Cạnh trái</b></div>
+            </div>
+          </div>
+          <div class="mv-slot" onclick="pickMultiSlot('right')" id="slotBoxRight">
+            <span class="mv-label optional">Cạnh Phải (Tùy chọn)</span>
+            <div class="mv-drop" id="mvDropRight">
+              <img id="mvPrevRight" alt="Right">
+              <div class="mv-hint" id="mvHintRight"><b>+ Cạnh phải</b></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1987,6 +2131,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <script>
 let curSource = 'image';
 let curMode = 'turbo';
+let curStyle = 'color';
+let curViewMode = 'single';
+let multiImgs = { front: null, back: null, left: null, right: null };
 let imgPath = null;
 let lastFolder = '';
 let dlUrl = '';
@@ -2095,6 +2242,80 @@ function switchSource(src) {
     boxImg.style.display = 'none';
   }
   updateGenBtnText();
+}
+
+/* ── style switch (PBR Color vs Clay Sculpture) ── */
+function switchStyle(s) {
+  curStyle = s;
+  const tabColor = document.getElementById('styleTabColor');
+  const tabClay = document.getElementById('styleTabClay');
+  if (s === 'clay') {
+    if (tabClay) tabClay.classList.add('active');
+    if (tabColor) tabColor.classList.remove('active');
+    window._setProgress('🏛️ Đã chọn: Tượng Thạch Cao Clay (Không màu, tối ưu In 3D & tự vẽ màu trong Blender)', -1);
+  } else {
+    if (tabColor) tabColor.classList.add('active');
+    if (tabClay) tabClay.classList.remove('active');
+    window._setProgress('🎨 Đã chọn: Đầy Đủ Màu Sắc PBR (Tự động nướng vân màu 1:1 siêu nét)', -1);
+  }
+  updateGenBtnText();
+}
+
+/* ── view mode switch (Single vs Multi-view 360°) ── */
+function switchViewMode(v) {
+  curViewMode = v;
+  const tabSingle = document.getElementById('vTabSingle');
+  const tabMulti = document.getElementById('vTabMulti');
+  const dropSingle = document.getElementById('drop');
+  const boxMulti = document.getElementById('multiViewBox');
+  if (v === 'multi') {
+    if (tabMulti) tabMulti.classList.add('active');
+    if (tabSingle) tabSingle.classList.remove('active');
+    if (dropSingle) dropSingle.style.display = 'none';
+    if (boxMulti) boxMulti.style.display = 'block';
+    window._setProgress('📸 Đã mở chế độ Đa góc nhìn: Hãy nạp ảnh Mặt Trước và Mặt Sau để khớp 360° hoàn hảo!', -1);
+  } else {
+    if (tabSingle) tabSingle.classList.add('active');
+    if (tabMulti) tabMulti.classList.remove('active');
+    if (dropSingle) dropSingle.style.display = 'flex';
+    if (boxMulti) boxMulti.style.display = 'none';
+  }
+}
+
+/* ── pick multi-view slot ── */
+async function pickMultiSlot(slot) {
+  const slotNameMap = {
+    front: 'Mặt Trước',
+    back: 'Mặt Sau (Lưng)',
+    left: 'Cạnh Trái',
+    right: 'Cạnh Phải'
+  };
+  window._setProgress('Đang mở hộp thoại chọn ảnh cho ' + (slotNameMap[slot] || slot) + '…', -1);
+  const r = await window.pywebview.api.select_multi_image(slot);
+  if (r && r.path) {
+    multiImgs[slot] = r.path;
+    if (slot === 'front') {
+      imgPath = r.path;
+      const prevSingle = document.getElementById('prev');
+      const dropHint = document.getElementById('dropHint');
+      if (prevSingle) {
+        prevSingle.src = r.dataUrl;
+        prevSingle.style.display = 'block';
+      }
+      if (dropHint) dropHint.style.display = 'none';
+    }
+    const cap = slot.charAt(0).toUpperCase() + slot.slice(1);
+    const p = document.getElementById('mvPrev' + cap);
+    const h = document.getElementById('mvHint' + cap);
+    if (p) {
+      p.src = r.dataUrl;
+      p.style.display = 'block';
+    }
+    if (h) h.style.display = 'none';
+    window._setProgress('✓ Đã nạp ' + (slotNameMap[slot] || slot) + ': ' + r.name, -1);
+  } else {
+    window._setProgress('Chưa chọn ảnh cho ' + (slotNameMap[slot] || slot) + '.', -1);
+  }
 }
 
 function setPrompt(text) {
@@ -2253,18 +2474,20 @@ function closeGuideModal() {
 
 function updateGenBtnText() {
   const btn = document.getElementById('btnGen');
+  if (!btn) return;
+  const styleSuffix = (curStyle === 'clay') ? ' [THẠCH CAO CLAY]' : '';
   if (curMode === 'meshy') {
     btn.className = 'btn-gen meshy-mode';
-    btn.innerHTML = (curSource === 'text') ? '✨ BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '✨ BẮT ĐẦU TẠO 3D (MESHY CLOUD 100%)';
+    btn.innerHTML = (curSource === 'text') ? `✨ BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)${styleSuffix}` : `✨ BẮT ĐẦU TẠO 3D (MESHY CLOUD 100%)${styleSuffix}`;
   } else if (curMode === 'hffree') {
     btn.className = 'btn-gen hffree-mode';
-    btn.innerHTML = (curSource === 'text') ? '🌐 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '🌐 BẮT ĐẦU TẠO 3D (CLOUD FREE 0đ)';
+    btn.innerHTML = (curSource === 'text') ? `🌐 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)${styleSuffix}` : `🌐 BẮT ĐẦU TẠO 3D (CLOUD FREE 0đ)${styleSuffix}`;
   } else if (curMode === 'turbo') {
     btn.className = 'btn-gen';
-    btn.innerHTML = (curSource === 'text') ? '🐉 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '🐉 BẮT ĐẦU TẠO 3D (RTX ĐẲNG CẤP)';
+    btn.innerHTML = (curSource === 'text') ? `🐉 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)${styleSuffix}` : `🐉 BẮT ĐẦU TẠO 3D (RTX ĐẲNG CẤP)${styleSuffix}`;
   } else {
     btn.className = 'btn-gen triposr-mode';
-    btn.innerHTML = (curSource === 'text') ? '⚡ BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '⚡ BẮT ĐẦU TẠO 3D (RTX SIÊU TỐC)';
+    btn.innerHTML = (curSource === 'text') ? `⚡ BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)${styleSuffix}` : `⚡ BẮT ĐẦU TẠO 3D (RTX SIÊU TỐC)${styleSuffix}`;
   }
 }
 
@@ -2340,9 +2563,19 @@ async function pickImage() {
   const r = await window.pywebview.api.select_image();
   if (r && r.path) {
     imgPath = r.path;
+    multiImgs.front = r.path;
     document.getElementById('prev').src = r.dataUrl;
     document.getElementById('prev').style.display = 'block';
     document.getElementById('dropHint').style.display = 'none';
+
+    const pF = document.getElementById('mvPrevFront');
+    const hF = document.getElementById('mvHintFront');
+    if (pF) {
+      pF.src = r.dataUrl;
+      pF.style.display = 'block';
+    }
+    if (hF) hF.style.display = 'none';
+
     window._setProgress('Đã chọn: ' + r.name + ' – Nhấn nút Bắt đầu tạo 3D!', -1);
   } else {
     window._setProgress('Chưa chọn ảnh.', -1);
@@ -2361,11 +2594,24 @@ async function generate() {
     octreeRes = 256;
   }
 
-  if (curSource === 'image' && !imgPath) {
-    window._setProgress('⚠️ Hãy nhấn vào khung chọn ảnh trước!', -1);
-    await pickImage();
-    if (!imgPath) return;
+  const effectiveFront = (curViewMode === 'multi') ? (multiImgs.front || imgPath) : imgPath;
+  const backImg = (curViewMode === 'multi') ? multiImgs.back : null;
+  const leftImg = (curViewMode === 'multi') ? multiImgs.left : null;
+  const rightImg = (curViewMode === 'multi') ? multiImgs.right : null;
+
+  if (curSource === 'image' && !effectiveFront) {
+    if (curViewMode === 'multi') {
+      window._setProgress('⚠️ Hãy nạp ảnh Mặt Trước (Chính diện) trước!', -1);
+      await pickMultiSlot('front');
+      if (!multiImgs.front) return;
+    } else {
+      window._setProgress('⚠️ Hãy nhấn vào khung chọn ảnh trước!', -1);
+      await pickImage();
+      if (!imgPath) return;
+    }
   }
+
+  const targetImg = (curViewMode === 'multi') ? (multiImgs.front || imgPath) : imgPath;
 
   if (curSource === 'text') {
     const prompt = document.getElementById('promptInput').value.trim();
@@ -2401,8 +2647,8 @@ async function generate() {
   try {
     const prompt = (curSource === 'text') ? document.getElementById('promptInput').value.trim() : '';
     const startRes = (curSource === 'text')
-      ? await window.pywebview.api.start_generate_from_text(prompt, curMode, quality, smooth, numSteps, octreeRes)
-      : await window.pywebview.api.start_generate_3d(imgPath, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality, numSteps, octreeRes);
+      ? await window.pywebview.api.start_generate_from_text(prompt, curMode, quality, smooth, numSteps, octreeRes, curStyle)
+      : await window.pywebview.api.start_generate_3d(targetImg, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality, numSteps, octreeRes, backImg, leftImg, rightImg, curStyle);
 
     if (!startRes || !startRes.task_id) {
       window._setProgress('❌ Không thể khởi tạo tác vụ: ' + (startRes && startRes.error ? startRes.error : 'Lỗi không xác định'), -1);

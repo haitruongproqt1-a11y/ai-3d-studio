@@ -1,15 +1,13 @@
 {
-  "version": "2.0.6",
+  "version": "2.0.7",
   "buildDate": "2026-09-25",
   "releaseNotes": [
-    "Đột phá động cơ tô màu Dual-View PBR 1:1 siêu chuẩn (Texture Engine v2): Khớp tọa độ chuẩn 100% từng pixel với ảnh gốc, cố định góc nhìn trực diện triệt tiêu hoàn toàn hiện tượng lệch trán/mắt/mũ/cằm.",
-    "Thuật toán khử phản chiếu & làm sạch 360° mặt sau: Tự động inpainting vùng đầu và thân, khử sạch hoàn toàn khuôn mặt hoặc chữ/logo bị lộn ra sau lưng, bảo toàn độ sắc nét kim loại, kính xe và trang phục.",
-    "Tích hợp Động cơ Hugging Face Cloud Free (0đ API): Chạy Tencent Hunyuan3D-2.1 trực tiếp trên cụm ZeroGPU đám mây hoàn toàn miễn phí, 0đ chi phí, không trừ credit API, không hao pin/nóng GPU laptop.",
-    "Hỗ trợ Hugging Face User Access Token (0đ Miễn phí): Người dùng có thể gắn token miễn phí từ huggingface.co để nhận quota ưu tiên riêng.",
-    "Bổ sung cẩm nang '📖 Hướng Dẫn 100%': Hướng dẫn chi tiết từ A-Z bí quyết chọn ảnh và sử dụng từng động cơ để đạt kết quả 3D hoàn mỹ như Meshy.",
-    "Cập nhật Thư viện 3D Studio hỗ trợ phân loại, lọc và xem trước mô hình Cloud Free."
+    "Tách biệt 2 Tùy chọn Xuất Model theo nhu cầu người dùng: 1) '🏛️ Tượng Thạch Cao Clay' xuất mô hình thạch cao đơn sắc trắng ngà hoàn mỹ, không dán texture, không lo sai màu, tối ưu tuyệt đối cho in 3D và người dùng tự tô màu/vẽ chất liệu bằng Blender; 2) '🎨 Đầy Đủ Màu Sắc PBR' tự động nướng vân màu 1:1 siêu nét.",
+    "Hỗ trợ Nạp Ảnh Đa Góc Nhìn 360° (Multi-View Input): Cho phép nạp đồng thời 4 góc ảnh: Mặt Trước, Mặt Sau (Lưng), Cạnh Trái, Cạnh Phải. Chiếu trực tiếp ảnh mặt sau thật lên 3D atlas, khử 100% suy đoán sai lệch lưng áo, tóc, đuôi xe.",
+    "Tối ưu toàn diện cho cả 4 Động cơ: Tương thích hoàn hảo trên RTX Hunyuan3D-2 Turbo Offline, Hugging Face Cloud Free (0đ API), RTX Siêu Tốc và Meshy Cloud Pro.",
+    "Giao diện trực quan: Bổ sung thanh chuyển Chế độ Xuất (Màu PBR / Thạch Cao Clay) và thanh chuyển Góc Nhìn (Ảnh đơn / Đa góc nhìn 360°) ngay thanh công cụ chính."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.6/update_v2.0.6.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.6/update_v2.0.6.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.6/update_v2.0.6.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.7/update_v2.0.7.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.7/update_v2.0.7.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.7/update_v2.0.7.zip"
 }
