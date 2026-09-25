@@ -39,7 +39,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.9"
+APP_VERSION = "v2.1.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1052,13 +1052,15 @@ class AppApi:
                 except Exception as e_clay:
                     logging.exception(f"Clay sculpture error: {e_clay}")
             else:
-                self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 85, task_id=task_id)
+                self._progress("🎨 AI đang nướng bản đồ vân PBR 360° 6 Hướng (Chất lượng Meshy)…", 85, task_id=task_id)
                 try:
                     from texture_engine import bake_meshy_pbr_mesh
                     mesh, _ = bake_meshy_pbr_mesh(
                         mesh, image,
                         back_image_source=back_image,
-                        color_mode="color"
+                        left_image_source=left_image,
+                        right_image_source=right_image,
+                        color_mode=color_mode
                     )
                 except Exception as e_col:
                     logging.exception(f"Meshy PBR Texture Engine error: {e_col}")
@@ -1965,10 +1967,10 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         auto-rotate-delay="4000"
         rotation-per-second="18deg"
         interaction-prompt="none"
-        shadow-intensity="0.3"
-        shadow-softness="0.8"
-        exposure="1.0"
-        tone-mapping="neutral"
+        shadow-intensity="1.2"
+        shadow-softness="0.4"
+        exposure="1.05"
+        tone-mapping="aces"
         style="display:none">
       </model-viewer>
 

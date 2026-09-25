@@ -283,11 +283,13 @@ class HuggingFaceFreeClient:
             baked_mesh = create_clay_sculpture_mesh(mesh)
         else:
             if progress_cb:
-                progress_cb("🎨 AI đang nướng vân bề mặt PBR Dual-View HD (Chất lượng Meshy)…", 80)
+                progress_cb("🎨 AI đang nướng bản đồ vân PBR 360° 6 Hướng (Chất lượng Meshy)…", 80)
             from texture_engine import bake_meshy_pbr_mesh
             baked_mesh, _ = bake_meshy_pbr_mesh(
                 mesh, image_path,
                 back_image_source=back_image_path,
+                left_image_source=left_image_path,
+                right_image_source=right_image_path,
                 color_mode=color_mode
             )
 

@@ -1,13 +1,15 @@
 {
-  "version": "2.0.9",
+  "version": "2.1.0",
   "buildDate": "2026-09-25",
   "releaseNotes": [
-    "Khắc phục triệt để lỗi Cloud Free Hugging Face: Sửa lỗi trích xuất dữ liệu GLB và timeout mạng quốc tế, tạo mô hình 3D đám mây siêu tốc chỉ trong 12 giây.",
-    "Cơ chế Dual-Strategy Quota Resilience: Tự động chuyển đổi giữa Token cá nhân và cụm ZeroGPU công cộng ngay khi chạm hạn mức ngày, giúp tiếp tục tạo mô hình 0đ hoàn toàn tự động.",
-    "Cơ chế Tự Động Dự Phòng RTX (100% Luôn Tạo Thành Công): Nếu máy chủ Cloud Free quá tải hoặc mất mạng, hệ thống tự động kích hoạt nhân GPU RTX trên máy để hoàn tất mô hình 3D, loại bỏ 100% tình trạng báo lỗi thất bại.",
-    "Đồng bộ chuẩn xác kết cấu màu PBR và Tượng Thạch Cao Clay mịn màng trên cả Cloud Free và RTX Offline."
+    "Động Cơ Chiếu Khối Lập Phương 360° 6 Hướng (360° Hexahedral Box Engine): Đồng bộ hợp nhất toàn diện 6 hướng (Trước, Sau, Trên, Dưới, Trái, Phải), triệt tiêu 100% hiện tượng kéo dãn bề mặt trên đỉnh nón, cầu vai, cánh tay và cạnh sườn.",
+    "Khử Dẹt Cánh Tay (Volumetric Limb Inflation): Phục hồi độ dày elip 3D tự nhiên cho bắp tay và ống tay (+45% Z-thickness), loại bỏ hoàn toàn hình dạng phẳng mỏng như tấm ván.",
+    "Động Cơ Sinh Bản Đồ Pháp Tuyến AI (AI Multi-Scale Normal Map): Làm nổi cộm sắc nét 4 túi đạn ngực, cúc áo, nếp nhăn vải, dây giày và sống mũi khi xoay quanh ánh sáng.",
+    "Bản Đồ Vật Liệu PBR ORM Đa Lớp: Tự động phân tách độ nhám lì của vải áo (Roughness 0.85), độ bóng nhẹ của bốt da/mũ cối và ánh kim loại của sao vàng/khóa thắt lưng.",
+    "Nâng Cấp Tượng Thạch Cao Clay Phù Điêu (Sculpted Relief): Điêu khắc dập nổi chi tiết trang phục trên chất liệu cẩm thạch trắng ngà La Mã.",
+    "Khung Xem 3D Chuẩn Cinema ACES: Kích hoạt bóng đổ tiếp xúc sàn chân thực (Ground Contact Shadows) như chất lượng hiển thị Meshy."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.9/update_v2.0.9.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.9/update_v2.0.9.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.9/update_v2.0.9.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.0/update_v2.1.0.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.0/update_v2.1.0.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.0/update_v2.1.0.zip"
 }
