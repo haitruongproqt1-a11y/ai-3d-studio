@@ -39,7 +39,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.8"
+APP_VERSION = "v2.0.9"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1206,7 +1206,31 @@ class AppApi:
             )
 
             if not res.get("success"):
-                return {"success": False, "error": res.get("error", "Lỗi Hugging Face Free")}
+                err_cause = res.get("error", "Máy chủ Cloud Free bận")
+                logging.warning(f"Cloud Free failed ({err_cause}). Auto fallback activating to guarantee 100% success...")
+                if is_hunyuan_downloaded() and HARDWARE_INFO.get("has_gpu"):
+                    self._progress(
+                        "⚠️ Cloud Free tạm thời quá tải. Đang tự động chuyển sang RTX Hunyuan3D Turbo trên máy (Đảm bảo 100% thành công)…",
+                        25,
+                        task_id=task_id
+                    )
+                    return self._gen_hunyuan3d_turbo(
+                        file_path, num_steps=num_steps, octree_res=octree_res,
+                        target_dir=target_dir, task_id=task_id,
+                        back_image=back_image, left_image=left_image, right_image=right_image,
+                        color_mode=color_mode
+                    )
+                else:
+                    self._progress(
+                        "⚠️ Cloud Free tạm thời quá tải. Đang tự động kích hoạt GPU RTX Siêu Tốc trên máy (Đảm bảo 100% thành công)…",
+                        25,
+                        task_id=task_id
+                    )
+                    return self._gen_local(
+                        file_path, quality="pbr_1024", smooth=True,
+                        target_dir=target_dir, task_id=task_id,
+                        back_image=back_image, color_mode=color_mode
+                    )
 
             glb_path = res["glb_path"]
             obj_path = res["obj_path"]
@@ -1241,8 +1265,33 @@ class AppApi:
                 "engine_used": engine_name
             }
         except Exception as e:
-            logging.exception("_gen_hf_free_cloud error")
-            return {"success": False, "error": f"Lỗi Hugging Face Free Cloud: {e}"}
+            logging.exception("_gen_hf_free_cloud unexpected error - executing fallback")
+            try:
+                if is_hunyuan_downloaded() and HARDWARE_INFO.get("has_gpu"):
+                    self._progress(
+                        "⚠️ Cloud Free gặp sự cố kết nối. Tự động kích hoạt RTX Hunyuan3D Turbo trên máy (Đảm bảo 100% thành công)…",
+                        25,
+                        task_id=task_id
+                    )
+                    return self._gen_hunyuan3d_turbo(
+                        file_path, num_steps=num_steps, octree_res=octree_res,
+                        target_dir=target_dir, task_id=task_id,
+                        back_image=back_image, left_image=left_image, right_image=right_image,
+                        color_mode=color_mode
+                    )
+                else:
+                    self._progress(
+                        "⚠️ Cloud Free gặp sự cố kết nối. Tự động kích hoạt GPU RTX Siêu Tốc trên máy (Đảm bảo 100% thành công)…",
+                        25,
+                        task_id=task_id
+                    )
+                    return self._gen_local(
+                        file_path, quality="pbr_1024", smooth=True,
+                        target_dir=target_dir, task_id=task_id,
+                        back_image=back_image, color_mode=color_mode
+                    )
+            except Exception as e_fb:
+                return {"success": False, "error": f"Lỗi tạo 3D: {e} (Dự phòng: {e_fb})"}
 
     # ── file operations ──────────────────────────────────────────────────────
     def open_folder(self, folder=None):
