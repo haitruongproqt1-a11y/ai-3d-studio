@@ -51,7 +51,7 @@ if not release_data:
     body_notes = "\n".join([f"- {note}" for note in vdata.get("releaseNotes", [])])
     payload = {
         "tag_name": version,
-        "name": f"AI 3D Studio {version} – Tích hợp Meshy.ai Cloud (100% Hoàn Hảo) & RTX 3050 Offline",
+        "name": f"AI 3D Studio {version} – Đột Phá Khớp Màu 1:1, Khử Loang Lổ 360° & Động Cơ Cloud Free 0đ",
         "body": f"### Bản phát hành AI 3D Studio {version}\n\n{body_notes}\n\n*Gói cập nhật OTA tự động tải về qua ứng dụng.*",
         "draft": False,
         "prerelease": False

@@ -35,10 +35,11 @@ import trimesh
 import cv2
 import rembg
 from meshy_client import MeshyClient
+from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.5"
+APP_VERSION = "v2.0.6"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -279,6 +280,7 @@ class AppApi:
         self.last_folder = OUTPUT_DIR
         self.config = load_config()
         self.meshy_client = MeshyClient(self.config.get("meshy_api_key", ""))
+        self.hf_client = HuggingFaceFreeClient(self.config.get("hf_token", ""))
         self._tasks = {}
 
     def set_window(self, w):
@@ -396,6 +398,8 @@ class AppApi:
             if not engine:
                 if "meshy" in d.lower():
                     engine = "✨ Meshy AI Cloud (Hoàn Hảo 100%)"
+                elif "hf_" in d.lower() or "hffree" in d.lower():
+                    engine = "🌐 Hugging Face Cloud Free (0đ)"
                 elif "hy" in d.lower() or "turbo" in d.lower():
                     engine = "RTX Đẳng Cấp (Hunyuan3D Turbo)"
                 else:
@@ -403,6 +407,8 @@ class AppApi:
 
             if "meshy" in engine.lower():
                 engine_key = "meshy"
+            elif ("hugging" in engine.lower() or "hffree" in engine.lower() or "cloud free" in engine.lower() or "hf_" in engine.lower()):
+                engine_key = "hffree"
             elif ("hunyuan" in engine.lower() or "turbo" in engine.lower() or "đẳng cấp" in engine.lower()):
                 engine_key = "turbo"
             else:
@@ -535,6 +541,10 @@ class AppApi:
             "meshy_status": {
                 "has_key": self.meshy_client.has_valid_key(),
                 "masked_key": self.meshy_client.get_masked_key()
+            },
+            "hf_status": {
+                "has_token": self.hf_client.has_token(),
+                "masked_token": self.hf_client.get_masked_token()
             }
         }
 
@@ -554,6 +564,24 @@ class AppApi:
             "success": True,
             "has_key": self.meshy_client.has_valid_key(),
             "masked_key": self.meshy_client.get_masked_key()
+        }
+
+    def get_hf_status(self):
+        return {
+            "has_token": self.hf_client.has_token(),
+            "masked_token": self.hf_client.get_masked_token(),
+            "token": self.hf_client.get_token()
+        }
+
+    def save_hf_token(self, token: str):
+        clean_tok = (token or "").strip()
+        self.config["hf_token"] = clean_tok
+        save_config(self.config)
+        self.hf_client.set_token(clean_tok)
+        return {
+            "success": True,
+            "has_token": self.hf_client.has_token(),
+            "masked_token": self.hf_client.get_masked_token()
         }
 
     def get_hunyuan_status(self):
@@ -754,6 +782,12 @@ class AppApi:
                     concept_file, enable_pbr=True,
                     target_dir=item_dir, task_id=task_id
                 )
+            elif engine == "hffree":
+                self._progress("🌐 Đưa hình phác họa vào Hugging Face Cloud Free tái tạo 3D…", 28, task_id=task_id)
+                res = self._gen_hf_free_cloud(
+                    concept_file, num_steps=num_steps, octree_res=octree_res,
+                    target_dir=item_dir, task_id=task_id
+                )
             elif engine in ("turbo", "hunyuan3d"):
                 self._progress("🐉 Đưa hình phác họa vào RTX Hunyuan3D Turbo tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hunyuan3d_turbo(
@@ -791,6 +825,8 @@ class AppApi:
                     num_steps=10, octree_res=160, task_id=None):
         if engine == "meshy":
             return self._gen_meshy_cloud(file_path, enable_pbr=True, task_id=task_id)
+        if engine == "hffree":
+            return self._gen_hf_free_cloud(file_path, num_steps=num_steps, octree_res=octree_res, task_id=task_id)
         if engine in ("turbo", "hunyuan3d"):
             return self._gen_hunyuan3d_turbo(
                 file_path, num_steps=num_steps, octree_res=octree_res, task_id=task_id
@@ -1079,6 +1115,62 @@ class AppApi:
         except Exception as e:
             logging.exception("_gen_meshy_cloud error")
             return {"success": False, "error": f"Lỗi Meshy AI Cloud: {e}"}
+
+    # ── ENGINE 4: HUGGING FACE FREE CLOUD (0 VNĐ API) ────────────────────────
+    def _gen_hf_free_cloud(self, file_path, num_steps=15, octree_res=256, target_dir=None, task_id=None):
+        self._progress("🌐 Đang kết nối tới Hugging Face Cloud Free (0đ API)…", 10, task_id=task_id)
+        try:
+            from hf_free_client import HuggingFaceFreeClient
+            token = self.config.get("hf_token", "")
+            client = HuggingFaceFreeClient(token)
+
+            def _step_cb(msg, pct):
+                self._progress(msg, pct, task_id=task_id)
+
+            res = client.generate_3d_free(
+                file_path,
+                progress_cb=_step_cb,
+                item_dir=target_dir,
+                steps=int(num_steps),
+                octree_res=int(octree_res)
+            )
+
+            if not res.get("success"):
+                return {"success": False, "error": res.get("error", "Lỗi Hugging Face Free")}
+
+            glb_path = res["glb_path"]
+            obj_path = res["obj_path"]
+            item_dir = res["item_dir"]
+
+            self.last_glb = glb_path
+            self.last_obj = obj_path
+            self.last_folder = item_dir
+
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine="🌐 Hugging Face Cloud Free (0đ)",
+                source="image",
+                input_img_path=file_path
+            )
+
+            self._progress("✅ Hoàn tất! Mô hình 3D từ Cloud Free sẵn sàng (100%).", 100, task_id=task_id)
+            with open(glb_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "success": True,
+                "folder": item_dir,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": glb_path,
+                "obj_path": obj_path,
+                "glb_file": glb_path,
+                "obj_file": obj_path,
+                "engine_used": "🌐 Hugging Face Cloud Free (0đ)"
+            }
+        except Exception as e:
+            logging.exception("_gen_hf_free_cloud error")
+            return {"success": False, "error": f"Lỗi Hugging Face Free Cloud: {e}"}
 
     # ── file operations ──────────────────────────────────────────────────────
     def open_folder(self, folder=None):
@@ -1431,6 +1523,10 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 .badge-turbo{background:rgba(192,38,211,.85);color:#fff}
 .badge-triposr{background:rgba(16,185,129,.85);color:#fff}
 .badge-meshy{background:linear-gradient(135deg,#0284c7,#8b5cf6);color:#fff}
+.badge-hffree{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
+.tab.hffree.on{background:linear-gradient(135deg,#065f46,#059669);color:#fff;border-color:#34d399;box-shadow:0 0 10px rgba(52,211,153,.35)}
+.btn-gen.hffree-mode{background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;color:#fff}
+.btn-gen.hffree-mode:hover{background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 0 16px rgba(52,211,153,.5)}
 
 .lib-badge-size{position:absolute;bottom:8px;right:8px;background:rgba(10,12,18,.8);border:1px solid rgba(255,255,255,.1);font-size:10px;font-weight:600;color:#cbd5e1;padding:2px 6px;border-radius:4px;backdrop-filter:blur(4px)}
 
@@ -1452,14 +1548,20 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.0.5</span>
+    <span class="ver" id="ver">v2.0.6</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
+    <button class="btn-hdr" onclick="openGuideModal()" style="background:#1e1b4b;border-color:#6366f1;color:#c7d2fe;font-weight:700" title="Xem Hướng Dẫn & Bí Quyết Tạo Model 3D Chuẩn 100%">
+      📖 Hướng Dẫn 100%
+    </button>
+    <button class="btn-hdr" onclick="openHfTokenModal()" style="background:#064e3b;border-color:#059669;color:#6ee7b7;font-weight:700" title="Cài đặt Hugging Face Free Token (0đ Miễn Phí)">
+      🌐 HF Token (0đ)
+    </button>
     <button class="btn-hdr" onclick="openMeshyKeyModal()" style="background:#0c4a6e;border-color:#0284c7;color:#38bdf8;font-weight:700" title="Cài đặt Meshy.ai Cloud API Key">
       🔑 Meshy API
     </button>
-    <button class="btn-hdr" onclick="releaseGpu()" style="background:#064e3b;border-color:#059669;color:#6ee7b7" title="Giải phóng VRAM ngay lập tức, đưa RTX 3050 về chế độ nghỉ 0W để tiết kiệm pin">
+    <button class="btn-hdr" onclick="releaseGpu()" style="background:#1e293b;border-color:#334155;color:#94a3b8" title="Giải phóng VRAM ngay lập tức, đưa RTX 3050 về chế độ nghỉ 0W để tiết kiệm pin">
       🍃 Trả GPU (0W)
     </button>
     <button class="btn-lib-hdr" onclick="openLibrary()" title="Mở Thư viện quản lý các mô hình 3D đã tạo">
@@ -1480,11 +1582,12 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <button class="src-tab" id="srcTabTxt" onclick="switchSource('text')">✍️ Từ Văn Bản</button>
     </div>
 
-    <!-- 3 Engine tabs: Meshy Cloud + 2 Local Offline RTX Engines -->
-    <div class="tabs">
-      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')">✨ Meshy Cloud</button>
-      <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')">🐉 RTX Đẳng Cấp</button>
-      <button class="tab" id="tabTripoSR" onclick="setMode('triposr')">⚡ RTX Siêu Tốc</button>
+    <!-- 4 Engine tabs: Local Offline + Free Cloud + Meshy Pro -->
+    <div class="tabs" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
+      <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')" title="NVIDIA RTX 3050 Offline 100% - Không tốn tiền, không giới hạn, Khớp 1:1">🐉 RTX Đẳng Cấp</button>
+      <button class="tab hffree" id="tabHfFree" onclick="setMode('hffree')" title="Tạo trên Hugging Face Cloud Free ZeroGPU (0đ API)">🌐 Cloud Free (0đ)</button>
+      <button class="tab" id="tabTripoSR" onclick="setMode('triposr')" title="TripoSR Siêu tốc ~15 giây Offline">⚡ RTX Siêu Tốc</button>
+      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')" title="Meshy.ai Cloud (Yêu cầu có Credit Meshy)">✨ Meshy Pro</button>
     </div>
 
     <!-- 1. IMAGE MODE CONTAINER -->
@@ -1520,8 +1623,37 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
     <!-- Info card -->
     <div class="info-card">
-      <span class="ic-title" id="icTitle">🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo</span>
-      <span class="ic-desc" id="icDesc">Kiến trúc DiT Flow Matching thế hệ mới, <b>tách khối sắc nét, mô hình thực và chất lượng cao</b>, không bị biến dạng hay dính bệt.</span>
+      <span class="ic-title" id="icTitle">🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo (Offline 100%)</span>
+      <span class="ic-desc" id="icDesc">Kiến trúc DiT Flow Matching + Động cơ UV Dual-View mới: <b>Khớp chuẩn 1:1 khuôn mặt & chi tiết, tự động khử loang lổ 360° mặt sau</b>, hoàn toàn miễn phí không giới hạn.</span>
+    </div>
+
+    <!-- Hugging Face Free Cloud Settings -->
+    <div id="hffreeSet" style="display:none">
+      <div class="sg" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <label>Hugging Face Token (Tùy chọn - Miễn phí 0đ):</label>
+          <button class="tag-btn" onclick="openHfTokenModal()" style="font-size:10px;padding:2px 7px">🌐 Cài Token</button>
+        </div>
+        <div id="hfTokenStatusBox" style="font-size:11px;color:#cbd5e1;background:#0d111a;padding:7px 9px;border-radius:6px;border:1px solid #1e2638;display:flex;align-items:center;justify-content:space-between">
+          <span id="hfTokenLabel">Chưa cấu hình Token (Đang dùng Quota công cộng)</span>
+          <button class="tag-btn" onclick="openHfTokenModal()" id="btnSetHfToken" style="font-size:10px;padding:2px 6px">Cài đặt</button>
+        </div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:4px">
+          💡 <i>Token Hugging Face 100% MIỄN PHÍ. Nhập token giúp bạn có hàng đợi ưu tiên không lo hết hạn mức!</i>
+        </div>
+      </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Độ sắc nét hình khối Cloud:</label>
+        <select id="hfSteps">
+          <option value="15" selected>🚀 15 bước Flow Matching (~25s) – Sắc nét & Nhanh</option>
+          <option value="25">💎 25 bước Chi tiết cao (~40s) – Mịn màng</option>
+          <option value="10">⚡ 10 bước Siêu tốc (~15s)</option>
+        </select>
+      </div>
+      <div class="chk-row" style="margin-bottom:6px">
+        <input type="checkbox" id="chkHfPbr" checked disabled>
+        <label class="chk-row" for="chkHfPbr">🎨 Tự động nướng vân PBR Dual-View HD 1:1 (Đã tích hợp)</label>
+      </div>
     </div>
 
     <!-- Meshy.ai Cloud Settings -->
@@ -1682,9 +1814,10 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       </div>
       <div class="lib-chips">
         <button class="lib-chip active" id="chipAll" onclick="setLibFilter('all')">Tất cả <span class="chip-num" id="cntAll">0</span></button>
-        <button class="lib-chip" id="chipMeshy" onclick="setLibFilter('meshy')">✨ Meshy Cloud <span class="chip-num" id="cntMeshy">0</span></button>
         <button class="lib-chip" id="chipTurbo" onclick="setLibFilter('turbo')">🐉 RTX Đẳng Cấp <span class="chip-num" id="cntTurbo">0</span></button>
+        <button class="lib-chip" id="chipHfFree" onclick="setLibFilter('hffree')">🌐 Cloud Free <span class="chip-num" id="cntHfFree">0</span></button>
         <button class="lib-chip" id="chipTripoSR" onclick="setLibFilter('triposr')">⚡ RTX Siêu Tốc <span class="chip-num" id="cntTripoSR">0</span></button>
+        <button class="lib-chip" id="chipMeshy" onclick="setLibFilter('meshy')">✨ Meshy Pro <span class="chip-num" id="cntMeshy">0</span></button>
       </div>
     </div>
 
@@ -1770,6 +1903,87 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
   </div>
 </div>
 
+<!-- Hugging Face Free Token Modal -->
+<div class="modal-bg" id="mHfToken">
+  <div class="modal" style="width:520px">
+    <div class="m-hdr">
+      <span class="m-title" style="color:#10b981;display:flex;align-items:center;gap:7px">
+        🌐 Cài đặt Hugging Face Free Token (0đ Miễn Phí)
+      </span>
+      <button class="m-x" onclick="closeHfTokenModal()">✕</button>
+    </div>
+    <div style="font-size:12px;color:#cbd5e1;line-height:1.5;display:flex;flex-direction:column;gap:10px">
+      <p>Hugging Face là nền tảng AI lớn nhất thế giới, cung cấp máy chủ ZeroGPU hoàn toàn <b>MIỄN PHÍ 100% (0 VNĐ, không cần thẻ tín dụng)</b>.</p>
+      
+      <div style="background:#061a12;border:1px solid #165b38;border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px">
+        <b style="color:#34d399">Cách lấy Token miễn phí trong 30 giây:</b>
+        <div>1️⃣ Nhấn nút <b>"🌐 Mở trang Tokens"</b> bên dưới và đăng ký / đăng nhập miễn phí.</div>
+        <div>2️⃣ Nhấn nút <b>"Create new token"</b> ➔ Chọn loại <b>"Read"</b> ➔ Đặt tên bất kỳ (ví dụ: <code>my-3d-token</code>) ➔ Bấm Create.</div>
+        <div>3️⃣ Sao chép mã Token (bắt đầu bằng <code>hf_...</code>) và dán vào ô bên dưới:</div>
+      </div>
+
+      <div class="sg">
+        <label style="color:#94a3b8;font-weight:600">Dán mã Hugging Face Token (hf_...):</label>
+        <input type="text" id="hfTokenInput" placeholder="Ví dụ: hf_AbCdEfGhIjKlMnOpQrStUvWxYz..." style="font-family:monospace;font-size:12px">
+      </div>
+      <div id="hfTokenSaveMsg" style="font-size:11px;min-height:16px"></div>
+    </div>
+    <div class="m-foot" style="gap:8px">
+      <button class="btn-m btn-m-sec" onclick="closeHfTokenModal()">Đóng</button>
+      <button class="btn-m btn-m-sec" onclick="openHfWeb()">🌐 Mở trang Tokens</button>
+      <button class="btn-m btn-m-pri" onclick="saveHfTokenFromUi()" style="background:linear-gradient(135deg,#059669,#10b981)">💾 Lưu Token</button>
+    </div>
+  </div>
+</div>
+
+<!-- Comprehensive 100% Quality Guidance Modal -->
+<div class="modal-bg" id="mGuide">
+  <div class="modal" style="width:680px; max-height:86vh; display:flex; flex-direction:column">
+    <div class="m-hdr">
+      <span class="m-title" style="color:#818cf8;display:flex;align-items:center;gap:7px">
+        📖 Hướng Dẫn & Bí Quyết Tạo Model 3D Đẹp Chuẩn 100%
+      </span>
+      <button class="m-x" onclick="closeGuideModal()">✕</button>
+    </div>
+    <div style="font-size:12px;color:#cbd5e1;line-height:1.6;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px">
+        <h4 style="color:#38bdf8;margin:0 0 6px 0;font-size:13px">⭐ 1. Bí quyết chọn ảnh đầu vào (Quyết định 80% độ hoàn hảo)</h4>
+        <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+          <li><b>Chụp góc chính diện hoặc nghiêng nhẹ (3/4)</b>: Giúp AI nắm bắt đầy đủ khuôn mặt, mắt, mũi, miệng, trang phục hoặc các bộ phận của xe/đồ vật.</li>
+          <li><b>Ánh sáng rõ nét, đủ sáng</b>: Tránh ảnh quá tối, bị ngược sáng, hoặc bóng đổ quá đậm che khuất chi tiết.</li>
+          <li><b>Tách nền sạch</b>: Dùng ảnh có chủ thể nổi bật so với hậu cảnh (hoặc ảnh PNG trong suốt) để mô hình 3D mịn màng, không bị dính vệt nền thừa.</li>
+        </ul>
+      </div>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px">
+        <h4 style="color:#f472b6;margin:0 0 6px 0;font-size:13px">🐉 2. Động cơ RTX Đẳng Cấp (Khuyên dùng - 100% Offline Miễn Phí)</h4>
+        <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+          <li>Chạy trực tiếp trên GPU NVIDIA RTX của máy tính bạn. <b>Không cần mạng, không tốn tiền, không giới hạn lượt tạo</b>.</li>
+          <li><b>Động cơ UV Dual-View mới</b>: Khớp chuẩn xác 1:1 khuôn mặt, mắt mũi, trang phục theo ảnh thật; tự động phủ tóc tự nhiên ở mặt sau và xóa chữ in ngược trên áo/thân xe, loại bỏ hoàn toàn hiện tượng loang lổ.</li>
+        </ul>
+      </div>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px">
+        <h4 style="color:#34d399;margin:0 0 6px 0;font-size:13px">🌐 3. Động cơ Cloud Free (0đ API - Hugging Face)</h4>
+        <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+          <li>Sử dụng máy chủ đám mây ZeroGPU từ Hugging Face. <b>Hoàn toàn 0đ, không bao giờ trừ credit</b>.</li>
+          <li>💡 <b>Mẹo hay</b>: Bấm nút <code>🌐 HF Token (0đ)</code> ở góc trên để nhập Token miễn phí, giúp bạn có hàng đợi ưu tiên không lo bị quá tải!</li>
+        </ul>
+      </div>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px">
+        <h4 style="color:#fbbf24;margin:0 0 6px 0;font-size:13px">✨ 4. Động cơ Meshy Cloud Pro</h4>
+        <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+          <li>Kết nối siêu máy tính GPU A100 của Meshy.ai dành riêng cho người dùng có gói trả phí/credit Meshy.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="m-foot" style="margin-top:10px">
+      <button class="btn-m btn-m-pri" onclick="closeGuideModal()" style="background:#4f46e5">Đã hiểu, Bắt đầu tạo 3D ngay!</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let curSource = 'image';
 let curMode = 'turbo';
@@ -1778,6 +1992,8 @@ let lastFolder = '';
 let dlUrl = '';
 let _hasMeshyKey = false;
 let _maskedMeshyKey = '';
+let _hasHfToken = false;
+let _maskedHfToken = '';
 
 /* ── Progress helper exposed to Python ── */
 window._setProgress = function(msg, pct) {
@@ -1829,6 +2045,11 @@ window.addEventListener('pywebviewready', async () => {
         _hasMeshyKey = !!init.meshy_status.has_key;
         _maskedMeshyKey = init.meshy_status.masked_key || '';
         updateMeshyKeyUi();
+      }
+      if (init.hf_status) {
+        _hasHfToken = !!init.hf_status.has_token;
+        _maskedHfToken = init.hf_status.masked_token || '';
+        updateHfTokenUi();
       }
       updateLibBadge();
     }
@@ -1953,11 +2174,91 @@ async function saveMeshyKeyFromUi() {
   }
 }
 
+/* ── Hugging Face Token UI Functions ── */
+function updateHfTokenUi() {
+  const lbl = document.getElementById('hfTokenLabel');
+  const btn = document.getElementById('btnSetHfToken');
+  if (lbl) {
+    if (_hasHfToken) {
+      lbl.innerHTML = `<span style="color:#34d399;font-weight:600">✓ Đã cấu hình Token: ${_maskedHfToken}</span>`;
+      if (btn) btn.textContent = 'Đổi Token';
+    } else {
+      lbl.innerHTML = `<span style="color:#94a3b8">Chưa cấu hình Token (Đang dùng Quota công cộng)</span>`;
+      if (btn) btn.textContent = 'Cài đặt';
+    }
+  }
+}
+
+async function openHfTokenModal() {
+  document.getElementById('mHfToken').style.display = 'flex';
+  const msg = document.getElementById('hfTokenSaveMsg');
+  if (msg) msg.textContent = '';
+  const input = document.getElementById('hfTokenInput');
+  if (input && window.pywebview && window.pywebview.api) {
+    try {
+      const st = await window.pywebview.api.get_hf_status();
+      if (st && st.token) {
+        input.value = st.token;
+      }
+    } catch(e) {}
+  }
+}
+
+function closeHfTokenModal() {
+  document.getElementById('mHfToken').style.display = 'none';
+}
+
+function openHfWeb() {
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.open_external_url('https://huggingface.co/settings/tokens');
+  } else {
+    window.open('https://huggingface.co/settings/tokens', '_blank');
+  }
+}
+
+async function saveHfTokenFromUi() {
+  const input = document.getElementById('hfTokenInput');
+  const token = input ? input.value.trim() : '';
+  const msg = document.getElementById('hfTokenSaveMsg');
+  if (msg) msg.innerHTML = '<span style="color:#38bdf8">⏳ Đang lưu Token Hugging Face...</span>';
+  try {
+    const res = await window.pywebview.api.save_hf_token(token);
+    if (res && res.success) {
+      _hasHfToken = !!res.has_token;
+      _maskedHfToken = res.masked_token || '';
+      updateHfTokenUi();
+      if (msg) msg.innerHTML = '<span style="color:#10b981;font-weight:600">✓ Đã lưu thành công Token Hugging Face!</span>';
+      setTimeout(() => {
+        closeHfTokenModal();
+        if (curMode === 'hffree') {
+          setMode('hffree');
+        }
+      }, 700);
+    } else {
+      if (msg) msg.innerHTML = '<span style="color:#ef4444">❌ Lỗi lưu token</span>';
+    }
+  } catch(e) {
+    if (msg) msg.innerHTML = '<span style="color:#ef4444">❌ Lỗi: ' + e + '</span>';
+  }
+}
+
+/* ── In-App 100% Quality Guide Modal Functions ── */
+function openGuideModal() {
+  document.getElementById('mGuide').style.display = 'flex';
+}
+
+function closeGuideModal() {
+  document.getElementById('mGuide').style.display = 'none';
+}
+
 function updateGenBtnText() {
   const btn = document.getElementById('btnGen');
   if (curMode === 'meshy') {
     btn.className = 'btn-gen meshy-mode';
     btn.innerHTML = (curSource === 'text') ? '✨ BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '✨ BẮT ĐẦU TẠO 3D (MESHY CLOUD 100%)';
+  } else if (curMode === 'hffree') {
+    btn.className = 'btn-gen hffree-mode';
+    btn.innerHTML = (curSource === 'text') ? '🌐 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '🌐 BẮT ĐẦU TẠO 3D (CLOUD FREE 0đ)';
   } else if (curMode === 'turbo') {
     btn.className = 'btn-gen';
     btn.innerHTML = (curSource === 'text') ? '🐉 BẮT ĐẦU TẠO 3D (TỪ VĂN BẢN)' : '🐉 BẮT ĐẦU TẠO 3D (RTX ĐẲNG CẤP)';
@@ -1973,9 +2274,11 @@ function setMode(m) {
   document.getElementById('tabMeshy').classList.remove('on');
   document.getElementById('tabTurbo').classList.remove('on');
   document.getElementById('tabTripoSR').classList.remove('on');
+  document.getElementById('tabHfFree').classList.remove('on');
   document.getElementById('meshySet').style.display = 'none';
   document.getElementById('turboSet').style.display = 'none';
   document.getElementById('triposrSet').style.display = 'none';
+  document.getElementById('hffreeSet').style.display = 'none';
 
   const progTxt = document.getElementById('progTxt');
   const barWrap = document.getElementById('barWrap');
@@ -1996,6 +2299,13 @@ function setMode(m) {
     } else {
       if (progTxt) progTxt.innerHTML = '<span style="color:#f59e0b;font-weight:600">⚠️ Bạn chưa nhập Meshy API Key. Bấm \'🔑 Đổi Key\' để cài đặt miễn phí!</span>';
     }
+  } else if (m === 'hffree') {
+    document.getElementById('tabHfFree').classList.add('on');
+    document.getElementById('hffreeSet').style.display = '';
+    document.getElementById('icTitle').textContent = '🌐 Hugging Face Cloud Free – ZeroGPU (0đ Miễn Phí 100%)';
+    document.getElementById('icDesc').innerHTML = 'Chạy mô hình Tencent Hunyuan3D-2.1 trực tiếp trên cụm máy chủ Hugging Face Cloud ZeroGPU. <b>0đ chi phí, 0 trừ credit, không hao pin/nóng máy RTX laptop</b>.';
+    updateHfTokenUi();
+    if (progTxt) progTxt.innerHTML = '<span style="color:#10b981;font-weight:600">🌐 Đã chọn Hugging Face Free Cloud (0đ). Bấm nút bên dưới để tạo!</span>';
   } else if (m === 'turbo') {
     document.getElementById('tabTurbo').classList.add('on');
     document.getElementById('turboSet').style.display = '';
@@ -2043,8 +2353,13 @@ async function pickImage() {
 async function generate() {
   const quality = document.getElementById('quality').value;
   const smooth = document.getElementById('chkSmooth').checked;
-  const numSteps = document.getElementById('turboSteps').value;
-  const octreeRes = document.getElementById('turboOctree').value;
+  let numSteps = document.getElementById('turboSteps').value;
+  let octreeRes = document.getElementById('turboOctree').value;
+  if (curMode === 'hffree') {
+    const hfSt = document.getElementById('hfSteps');
+    if (hfSt) numSteps = hfSt.value;
+    octreeRes = 256;
+  }
 
   if (curSource === 'image' && !imgPath) {
     window._setProgress('⚠️ Hãy nhấn vào khung chọn ảnh trước!', -1);
@@ -2302,13 +2617,14 @@ async function updateLibBadge() {
 }
 
 function updateFilterCounts() {
-  const counts = { all: _libItems.length, meshy: 0, turbo: 0, triposr: 0 };
+  const counts = { all: _libItems.length, meshy: 0, hffree: 0, turbo: 0, triposr: 0 };
   _libItems.forEach(it => {
     const k = it.engine_key || 'triposr';
     if (counts[k] !== undefined) counts[k]++;
   });
   const cAll = document.getElementById('cntAll'); if (cAll) cAll.textContent = counts.all;
   const cMsh = document.getElementById('cntMeshy'); if (cMsh) cMsh.textContent = counts.meshy;
+  const cHf = document.getElementById('cntHfFree'); if (cHf) cHf.textContent = counts.hffree;
   const cTrb = document.getElementById('cntTurbo'); if (cTrb) cTrb.textContent = counts.turbo;
   const cTsr = document.getElementById('cntTripoSR'); if (cTsr) cTsr.textContent = counts.triposr;
 }
@@ -2342,12 +2658,13 @@ async function refreshLibraryData() {
 
 function setLibFilter(cat) {
   _curLibFilter = cat;
-  ['chipAll','chipMeshy','chipTurbo','chipTripoSR'].forEach(id => {
+  ['chipAll','chipMeshy','chipHfFree','chipTurbo','chipTripoSR'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active');
   });
   if (cat === 'all') { const el = document.getElementById('chipAll'); if (el) el.classList.add('active'); }
   else if (cat === 'meshy') { const el = document.getElementById('chipMeshy'); if (el) el.classList.add('active'); }
+  else if (cat === 'hffree') { const el = document.getElementById('chipHfFree'); if (el) el.classList.add('active'); }
   else if (cat === 'turbo') { const el = document.getElementById('chipTurbo'); if (el) el.classList.add('active'); }
   else if (cat === 'triposr') { const el = document.getElementById('chipTripoSR'); if (el) el.classList.add('active'); }
   renderLibGrid();
@@ -2392,6 +2709,7 @@ function renderLibGrid() {
   filtered.forEach(it => {
     let badgeClass = 'badge-triposr';
     if (it.engine_key === 'meshy') badgeClass = 'badge-meshy';
+    else if (it.engine_key === 'hffree') badgeClass = 'badge-hffree';
     else if (it.engine_key === 'turbo') badgeClass = 'badge-turbo';
 
     const thumbHtml = it.thumb_url

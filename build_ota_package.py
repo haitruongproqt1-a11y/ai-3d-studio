@@ -12,6 +12,7 @@ version = v_data.get("version", "2.0.0")
 files_to_pack = [
     "app.py",
     "meshy_client.py",
+    "hf_free_client.py",
     "texture_engine.py",
     "version.json",
     "Xem_File_3D.html",
