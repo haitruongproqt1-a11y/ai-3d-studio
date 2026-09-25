@@ -36,7 +36,7 @@ class HuggingFaceFreeClient:
     def generate_3d_free(self, image_path: str, progress_cb=None, item_dir=None, steps=15, octree_res=256) -> dict:
         """
         Executes free 3D generation via Hugging Face Spaces.
-        1. Queries Tencent Hunyuan3D-2.1 or TRELLIS Free Space.
+        1. Queries Tencent Hunyuan3D-2.1 Free Space via submit job.
         2. Retrieves the 3D mesh.
         3. Applies our local Meshy-grade photographic texture engine.
         Returns dict with success status and file paths.
@@ -50,49 +50,65 @@ class HuggingFaceFreeClient:
             return {"success": False, "error": "Chưa cài đặt gradio_client. Vui lòng cập nhật môi trường!"}
 
         if progress_cb:
-            progress_cb("🌐 Đang kết nối tới Hugging Face Cloud Free (ZeroGPU 0đ)…", 15)
+            progress_cb("🌐 Đang kết nối tới máy chủ Hugging Face Cloud Free (ZeroGPU 0đ)…", 15)
 
-        client_kwargs = {"verbose": False}
-        if self.has_token():
-            client_kwargs["hf_token"] = self.hf_token
+        token_arg = self.hf_token if self.has_token() else None
 
-        # Try Tencent Hunyuan3D-2.1 First (Fastest & Most Stable Shape Gen)
         temp_glb_path = None
         try:
             if progress_cb:
                 progress_cb("🐉 Đang nạp mô hình Tencent Hunyuan3D-2.1 trên Cloud GPU…", 25)
-            c = Client("tencent/Hunyuan3D-2.1", **client_kwargs)
+            c = Client("tencent/Hunyuan3D-2.1", token=token_arg, verbose=False)
 
             if progress_cb:
-                progress_cb("⚡ ZeroGPU đang suy luận hình học 3D (Không tốn Credit)…", 45)
+                progress_cb("⏳ Đang gửi yêu cầu vào hàng đợi Cloud ZeroGPU (0đ Miễn phí)…", 35)
 
-            res = c.predict(
+            job = c.submit(
                 image=handle_file(image_path),
-                mv_image_front=None,
-                mv_image_back=None,
-                mv_image_left=None,
-                mv_image_right=None,
-                steps=int(steps),
-                guidance_scale=5.0,
-                seed=1234,
-                octree_resolution=int(octree_res),
-                check_box_rembg=True,
-                num_chunks=8000,
-                randomize_seed=True,
                 api_name="/shape_generation"
             )
 
-            # res is (file, output, mesh_stats, seed)
-            # res[0] is dict with {'value': filepath} or string filepath
-            if isinstance(res, (list, tuple)) and len(res) > 0:
-                out_item = res[0]
-                if isinstance(out_item, dict) and "value" in out_item:
-                    temp_glb_path = out_item["value"]
-                elif isinstance(out_item, str):
-                    temp_glb_path = out_item
+            poll_count = 0
+            while not job.done():
+                time.sleep(1.5)
+                poll_count += 1
+                try:
+                    st = job.status()
+                    code = str(getattr(st, 'code', ''))
+                    if 'STARTING' in code:
+                        if progress_cb:
+                            progress_cb("⏳ Đang chuẩn bị nhân tính toán ZeroGPU Cloud…", 40)
+                    elif 'PROCESSING' in code:
+                        pct = min(75, 45 + poll_count * 2)
+                        if progress_cb:
+                            progress_cb(f"⚡ ZeroGPU đang suy luận hình khối 3D ({pct}%)…", pct)
+                except Exception:
+                    pass
+
+            outputs = job.outputs()
+            if outputs and len(outputs) > 0:
+                first_out = outputs[0]
+                if isinstance(first_out, (list, tuple)) and len(first_out) > 0:
+                    item = first_out[0]
+                    if isinstance(item, dict) and "value" in item:
+                        temp_glb_path = item["value"]
+                    elif isinstance(item, str):
+                        temp_glb_path = item
+
+            if not temp_glb_path:
+                try:
+                    res = job.result()
+                    if isinstance(res, (list, tuple)) and len(res) > 0:
+                        item = res[0]
+                        if isinstance(item, dict) and "value" in item:
+                            temp_glb_path = item["value"]
+                        elif isinstance(item, str):
+                            temp_glb_path = item
+                except Exception as e_res:
+                    logging.warning(f"job.result fallback notice: {e_res}")
+
         except Exception as e_hy:
-            logging.warning(f"Hunyuan3D-2.1 free space error: {e_hy}")
-            # Check if quota exceeded
+            logging.exception(f"Hunyuan3D-2.1 free space error: {e_hy}")
             err_msg = str(e_hy)
             if "quota" in err_msg.lower() or "zerogpu" in err_msg.lower():
                 return {
@@ -123,7 +139,7 @@ class HuggingFaceFreeClient:
 
         # Apply our Meshy-grade Universal Camera-Adaptive PBR Texture Engine
         if progress_cb:
-            progress_cb("🎨 AI đang nướng vân bề mặt PBR Dual-View HD (Chất lượng Meshy)…", 75)
+            progress_cb("🎨 AI đang nướng vân bề mặt PBR Dual-View HD (Chất lượng Meshy)…", 80)
 
         import trimesh
         from texture_engine import bake_meshy_pbr_mesh
@@ -132,7 +148,7 @@ class HuggingFaceFreeClient:
         baked_mesh, _ = bake_meshy_pbr_mesh(mesh, image_path)
 
         if progress_cb:
-            progress_cb("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét…", 90)
+            progress_cb("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét…", 95)
 
         glb_path = os.path.join(item_dir, "model.glb")
         obj_path = os.path.join(item_dir, "model.obj")
