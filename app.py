@@ -39,7 +39,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.0.7"
+APP_VERSION = "v2.0.8"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")

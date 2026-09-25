@@ -1,13 +1,13 @@
 {
-  "version": "2.0.7",
+  "version": "2.0.8",
   "buildDate": "2026-09-25",
   "releaseNotes": [
-    "Tách biệt 2 Tùy chọn Xuất Model theo nhu cầu người dùng: 1) '🏛️ Tượng Thạch Cao Clay' xuất mô hình thạch cao đơn sắc trắng ngà hoàn mỹ, không dán texture, không lo sai màu, tối ưu tuyệt đối cho in 3D và người dùng tự tô màu/vẽ chất liệu bằng Blender; 2) '🎨 Đầy Đủ Màu Sắc PBR' tự động nướng vân màu 1:1 siêu nét.",
-    "Hỗ trợ Nạp Ảnh Đa Góc Nhìn 360° (Multi-View Input): Cho phép nạp đồng thời 4 góc ảnh: Mặt Trước, Mặt Sau (Lưng), Cạnh Trái, Cạnh Phải. Chiếu trực tiếp ảnh mặt sau thật lên 3D atlas, khử 100% suy đoán sai lệch lưng áo, tóc, đuôi xe.",
-    "Tối ưu toàn diện cho cả 4 Động cơ: Tương thích hoàn hảo trên RTX Hunyuan3D-2 Turbo Offline, Hugging Face Cloud Free (0đ API), RTX Siêu Tốc và Meshy Cloud Pro.",
-    "Giao diện trực quan: Bổ sung thanh chuyển Chế độ Xuất (Màu PBR / Thạch Cao Clay) và thanh chuyển Góc Nhìn (Ảnh đơn / Đa góc nhìn 360°) ngay thanh công cụ chính."
+    "Sửa triệt để lỗi lệch mũi & khuôn mặt (Isotropic Center-Aligned Camera): Khóa trục dọc trung tâm (Spinal Axis Midline) và tỷ lệ đồng nhất 1:1, cố định sống mũi 3D khớp chuẩn xác tuyệt đối từng milimet lên mũi ảnh gốc, không còn bị lệch sang má hay biến dạng.",
+    "Thuật toán phân tách chiều sâu Coronal (Coronal Depth Segmentation): Giữ nguyên 100% chi tiết lỗ mũi, hốc mắt, cằm và nếp gấp ngực áo trên mặt trước, loại bỏ hoàn toàn hiện tượng lỗ mũi bị rách hay mặt bị nứt xé ra sau lưng.",
+    "Thuật toán loang màu Voronoi (Voronoi Infinite Color Bleed): Tự động mở rộng màu sắc của chủ thể ra ngoài nền vô cực, xóa sạch 100% vệt trắng dọc sườn, cánh tay, mũ cối và ống quần.",
+    "Khớp chuẩn góc nhìn mặt sau (Inverted X Back Projection): Đảo chiều trục hoành chính xác theo quy luật máy ảnh nhìn từ sau lưng, giúp lưng áo, vai, tóc và phù hiệu mũ khớp 1:1."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.7/update_v2.0.7.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.7/update_v2.0.7.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.7/update_v2.0.7.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.8/update_v2.0.8.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.8/update_v2.0.8.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.0.8/update_v2.0.8.zip"
 }

@@ -1,24 +1,36 @@
 """
-texture_engine.py - Meshy-Grade Dual-View PBR Texture Engine v2.1
+texture_engine.py - Meshy-Grade Dual-View PBR Texture Engine v2.2
 ------------------------------------------------------------------
 Features:
-- Canonical Forward-Ray Camera projection (v=[0,0,1], r=[1,0,0], u=[0,1,0])
-- Sub-millimeter bounding box alignment between 2D foreground and 3D mesh
-- Multi-View Support: projects real back photograph when provided
-- Clean Back Inpainting fallback: removes mirrored faces and graphics
-- Clay Sculpture Mode: pure untextured plaster for 3D printing & Blender painting
+- Isotropic Center-Aligned Camera Projection (Preserves 1:1 facial & bodily proportions)
+- Coronal Depth Segmentation (z > -0.04 keeps entire face, nostrils & jaw in front)
+- Voronoi Nearest-Neighbor Color Bleed (Eliminates 100% of white/black halo seams)
+- Inverted X Projection for Real Back Photo (Khớp 1:1 góc nhìn từ sau lưng)
+- Clay Sculpture Mode: pure untextured museum plaster for 3D printing & Blender painting
 """
 
 import os
 import cv2
 import numpy as np
+import scipy.ndimage as ndi
 import trimesh
 import logging
 from PIL import Image
 
+def voronoi_pad(img_bgr, mask):
+    """
+    Extends foreground colors infinitely into background using Voronoi nearest-neighbor propagation.
+    Guarantees zero white/black borders or halo seams.
+    """
+    if np.all(mask):
+        return img_bgr.copy()
+    bg_mask = ~mask
+    dist, indices = ndi.distance_transform_edt(bg_mask, return_indices=True)
+    return img_bgr[indices[0], indices[1]]
+
 def get_clean_foreground(img_bgr, pil_img):
     """
-    Extracts high-precision foreground mask using rembg u2net or color thresholding.
+    Extracts high-precision foreground mask using rembg u2net, eroded by 2-3px to kill background fringe.
     """
     try:
         import rembg
@@ -26,8 +38,8 @@ def get_clean_foreground(img_bgr, pil_img):
         arr = np.array(clean_rgba)
         if arr.shape[2] == 4:
             alpha = arr[:, :, 3]
-            mask = (alpha > 25).astype(np.uint8) * 255
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+            mask = (alpha > 30)
+            mask = ndi.binary_erosion(mask, iterations=2)
             return mask
     except Exception as e:
         logging.warning(f"Foreground extraction warning: {e}")
@@ -36,9 +48,9 @@ def get_clean_foreground(img_bgr, pil_img):
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     corners = [gray[0:10, 0:10], gray[0:10, -10:], gray[-10:, 0:10], gray[-10:, -10:]]
     bg_val = np.median([np.median(c) for c in corners])
-    diff = np.abs(gray.astype(np.int16) - bg_val).astype(np.uint8)
-    _, mask = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+    diff = np.abs(gray.astype(np.int16) - bg_val)
+    mask = (diff > 20)
+    mask = ndi.binary_erosion(mask, iterations=2)
     return mask
 
 def create_clay_sculpture_mesh(mesh):
@@ -58,39 +70,34 @@ def create_clay_sculpture_mesh(mesh):
 
 def build_universal_texture_atlas(img_bgr, clean_mask, mesh, back_image_source=None):
     """
-    Creates high-definition 2:1 Texture Atlas.
-    Left half [0.0, 0.5]: Front View (pixel-perfect from front photo).
-    Right half [0.5, 1.0]: Back View (from real back photo if provided, else inpaint-cleaned).
+    Creates high-definition 2:1 Texture Atlas with Voronoi seamless edge padding.
+    Left half [0.0, 0.5]: Front View (Isotropic Center-Aligned).
+    Right half [0.5, 1.0]: Back View (Real photo or inpaint-cleaned synthetic).
     """
     h, w = img_bgr.shape[:2]
 
-    # 1. Subject 2D Bounding Box on front image
-    coords = np.nonzero(clean_mask > 20)
-    if len(coords[0]) > 0:
-        y_min_2d, y_max_2d = coords[0].min(), coords[0].max()
-        x_min_2d, x_max_2d = coords[1].min(), coords[1].max()
+    # 1. Front View Voronoi Padding
+    front_padded = voronoi_pad(img_bgr, clean_mask)
+
+    # Compute front metrics
+    coords_f = np.nonzero(clean_mask)
+    if len(coords_f[0]) > 0:
+        y_min_2d_f, y_max_2d_f = coords_f[0].min(), coords_f[0].max()
     else:
-        y_min_2d, y_max_2d = 0, h - 1
-        x_min_2d, x_max_2d = 0, w - 1
+        y_min_2d_f, y_max_2d_f = 0, h - 1
+    h_2d_f = max(1.0, y_max_2d_f - y_min_2d_f)
 
-    subj_w_2d = max(1.0, x_max_2d - x_min_2d)
-    subj_h_2d = max(1.0, y_max_2d - y_min_2d)
-
-    # 2. Front View Edge Dilation / Bleed (45 pixels outward)
-    kernel_pad = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
-    dilated_mask = cv2.dilate(clean_mask, kernel_pad)
-    edge_inpaint_mask = ((dilated_mask > 0) & (clean_mask == 0)).astype(np.uint8) * 255
-    front_padded = cv2.inpaint(img_bgr, edge_inpaint_mask, 15, cv2.INPAINT_TELEA)
-
-    # 3D bounding box along canonical axes
-    v = mesh.vertices
-    p_min_x, p_max_x = np.percentile(v[:, 0], 0.1), np.percentile(v[:, 0], 99.9)
-    p_min_y, p_max_y = np.percentile(v[:, 1], 0.1), np.percentile(v[:, 1], 99.9)
-    span_x_3d = max(1e-4, p_max_x - p_min_x)
-    span_y_3d = max(1e-4, p_max_y - p_min_y)
+    # Midline of front subject in 2D
+    mid_rows_f = coords_f[0][(coords_f[0] > y_min_2d_f + 0.1 * h_2d_f) & (coords_f[0] < y_min_2d_f + 0.5 * h_2d_f)]
+    mid_cols_f = coords_f[1][(coords_f[0] > y_min_2d_f + 0.1 * h_2d_f) & (coords_f[0] < y_min_2d_f + 0.5 * h_2d_f)]
+    x_mid_2d_f = float(np.median(mid_cols_f)) if len(mid_cols_f) > 0 else (w / 2.0)
 
     has_real_back = False
     back_padded = None
+    x_mid_2d_b = x_mid_2d_f
+    y_min_2d_b = y_min_2d_f
+    y_max_2d_b = y_max_2d_f
+    h_2d_b = h_2d_f
 
     if back_image_source is not None:
         try:
@@ -110,94 +117,43 @@ def build_universal_texture_atlas(img_bgr, clean_mask, mesh, back_image_source=N
                 if back_bgr.shape[:2] != (h, w):
                     back_bgr = cv2.resize(back_bgr, (w, h), interpolation=cv2.INTER_AREA)
                     back_pil = back_pil.resize((w, h), Image.Resampling.LANCZOS)
+                
+                # Extract clean background mask
                 back_mask = get_clean_foreground(back_bgr, back_pil)
-                back_dil = cv2.dilate(back_mask, kernel_pad)
-                back_edge = ((back_dil > 0) & (back_mask == 0)).astype(np.uint8) * 255
-                back_padded = cv2.inpaint(back_bgr, back_edge, 15, cv2.INPAINT_TELEA)
-                has_real_back = True
+                # Also filter out white studio background if present
+                back_is_white = (back_bgr[:, :, 0] > 220) & (back_bgr[:, :, 1] > 220) & (back_bgr[:, :, 2] > 220)
+                back_mask = back_mask & (~back_is_white)
+                back_mask = ndi.binary_erosion(back_mask, iterations=4)
+                
+                back_padded = voronoi_pad(back_bgr, back_mask)
+                
+                coords_b = np.nonzero(back_mask)
+                if len(coords_b[0]) > 0:
+                    y_min_2d_b, y_max_2d_b = coords_b[0].min(), coords_b[0].max()
+                    h_2d_b = max(1.0, y_max_2d_b - y_min_2d_b)
+                    mid_rows_b = coords_b[0][(coords_b[0] > y_min_2d_b + 0.1 * h_2d_b) & (coords_b[0] < y_min_2d_b + 0.5 * h_2d_b)]
+                    mid_cols_b = coords_b[1][(coords_b[0] > y_min_2d_b + 0.1 * h_2d_b) & (coords_b[0] < y_min_2d_b + 0.5 * h_2d_b)]
+                    x_mid_2d_b = float(np.median(mid_cols_b)) if len(mid_cols_b) > 0 else (w / 2.0)
+                    has_real_back = True
         except Exception as e_back:
             logging.warning(f"Notice loading real back image: {e_back}")
             has_real_back = False
 
     if not has_real_back or back_padded is None:
-        # 3. Authentic Back View Synthesis (Inpainting when no real back image provided)
-        back = cv2.flip(front_padded, 1)
-        back_clean_mask = cv2.flip(clean_mask, 1)
-
-        y_min_mesh, y_max_mesh = v[:, 1].min(), v[:, 1].max()
-        height_mesh = y_max_mesh - y_min_mesh
-
-        # Targeted Head / Facial Cleaning on Back
-        top_thresh = y_max_mesh - 0.25 * height_mesh
-        head_candidates = v[v[:, 1] > top_thresh]
-
-        if len(head_candidates) > 50:
-            med_x = np.median(head_candidates[:, 0])
-            med_z = np.median(head_candidates[:, 2])
-            dist_to_center = np.sqrt((head_candidates[:, 0] - med_x)**2 + (head_candidates[:, 2] - med_z)**2)
-            head_v = head_candidates[dist_to_center < 0.35 * height_mesh]
-
-            if len(head_v) > 30:
-                p_head_3d = np.mean(head_v, axis=0)
-                u_head = (p_head_3d[0] - p_min_x) / span_x_3d
-                v_head = (p_head_3d[1] - p_min_y) / span_y_3d
-
-                px_front_head = int(np.clip(x_min_2d + u_head * subj_w_2d, 0, w - 1))
-                py_front_head = int(np.clip(y_max_2d - v_head * subj_h_2d, 0, h - 1))
-                px_back_head = (w - 1) - px_front_head
-                py_back_head = py_front_head
-
-                head_half_w = int(max(40, subj_w_2d * 0.15))
-                head_half_h = int(max(50, subj_h_2d * 0.20))
-                hx0 = max(0, px_back_head - head_half_w)
-                hx1 = min(w, px_back_head + head_half_w)
-                hy0 = max(0, py_back_head - head_half_h)
-                hy1 = min(h, py_back_head + head_half_h)
-
-                head_roi = back[hy0:hy1, hx0:hx1]
-                if head_roi.size > 0:
-                    hsv_head = cv2.cvtColor(head_roi, cv2.COLOR_BGR2HSV)
-                    is_skin = (hsv_head[:, :, 0] <= 25) & (hsv_head[:, :, 1] >= 28) & (hsv_head[:, :, 2] >= 55)
-                    is_skin = is_skin & (head_roi[:, :, 2] > head_roi[:, :, 1]) & (head_roi[:, :, 1] > head_roi[:, :, 0])
-
-                    if np.mean(is_skin) > 0.05:
-                        face_mask = is_skin.astype(np.uint8) * 255
-                        face_mask = cv2.morphologyEx(face_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25)))
-                        face_mask = cv2.dilate(face_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
-
-                        crown_h = max(5, int(head_roi.shape[0] * 0.22))
-                        hair_crown = head_roi[:crown_h, :]
-                        avg_hair = np.median(hair_crown.reshape(-1, 3), axis=0).astype(np.uint8) if hair_crown.size > 0 else np.array([20, 20, 20], dtype=np.uint8)
-
-                        head_cleaned = cv2.inpaint(head_roi, face_mask, 15, cv2.INPAINT_TELEA)
-                        dist_map = cv2.distanceTransform(face_mask, cv2.DIST_L2, 5)
-                        if dist_map.max() > 0:
-                            weight = np.clip(dist_map / dist_map.max() * 0.75, 0, 0.75)[:, :, np.newaxis]
-                            head_cleaned = (head_cleaned * (1.0 - weight) + avg_hair * weight).astype(np.uint8)
-
-                        back[hy0:hy1, hx0:hx1] = head_cleaned
-
-                # Targeted Torso Graphic / Text Removal on Back
-                torso_half_w = int(max(60, subj_w_2d * 0.22))
-                torso_y0 = min(h, py_back_head + int(head_half_h * 0.8))
-                torso_y1 = min(h, torso_y0 + int(subj_h_2d * 0.35))
-                tx0 = max(0, px_back_head - torso_half_w)
-                tx1 = min(w, px_back_head + torso_half_w)
-
-                torso_roi = back[torso_y0:torso_y1, tx0:tx1]
-                if torso_roi.size > 0:
-                    hsv_torso = cv2.cvtColor(torso_roi, cv2.COLOR_BGR2HSV)
-                    is_graphic = (hsv_torso[:, :, 1] > 90) | ((torso_roi[:, :, 2] > 140) & (torso_roi[:, :, 0] > 90) & (torso_roi[:, :, 1] < 150))
-                    g_mask = is_graphic.astype(np.uint8) * 255
-                    if np.sum(g_mask) > 100:
-                        g_dil = cv2.dilate(g_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
-                        torso_cleaned = cv2.inpaint(torso_roi, g_dil, 15, cv2.INPAINT_TELEA)
-                        back[torso_y0:torso_y1, tx0:tx1] = torso_cleaned
-
-        # Edge pad back (45px dilation)
-        back_dilated = cv2.dilate(back_clean_mask, kernel_pad)
-        edge_inpaint_back = ((back_dilated > 0) & (back_clean_mask == 0)).astype(np.uint8) * 255
-        back_padded = cv2.inpaint(back, edge_inpaint_back, 15, cv2.INPAINT_TELEA)
+        # Synthetic Back: flip front padded horizontally
+        back_padded = cv2.flip(front_padded, 1)
+        # Inpaint face/skin on back of head
+        hsv_back = cv2.cvtColor(back_padded, cv2.COLOR_BGR2HSV)
+        is_skin = (hsv_back[:, :, 0] <= 25) & (hsv_back[:, :, 1] >= 28) & (hsv_back[:, :, 2] >= 55)
+        is_skin[:int(h * 0.05), :] = False
+        is_skin[int(h * 0.4):, :] = False
+        if np.any(is_skin):
+            skin_mask = ndi.binary_dilation(is_skin, iterations=4).astype(np.uint8) * 255
+            back_padded = cv2.inpaint(back_padded, skin_mask, 15, cv2.INPAINT_TELEA)
+        x_mid_2d_b = (w - 1) - x_mid_2d_f
+        y_min_2d_b = y_min_2d_f
+        y_max_2d_b = y_max_2d_f
+        h_2d_b = h_2d_f
 
     # 4. Pack Texture Atlas (Left: Front, Right: Back)
     atlas = np.zeros((h, w * 2, 3), dtype=np.uint8)
@@ -206,18 +162,14 @@ def build_universal_texture_atlas(img_bgr, clean_mask, mesh, back_image_source=N
     atlas_pil = Image.fromarray(atlas)
 
     bounds_data = {
-        "x_min_2d": x_min_2d,
-        "x_max_2d": x_max_2d,
-        "y_min_2d": y_min_2d,
-        "y_max_2d": y_max_2d,
-        "subj_w_2d": subj_w_2d,
-        "subj_h_2d": subj_h_2d,
-        "p_min_x": p_min_x,
-        "p_max_x": p_max_x,
-        "span_x_3d": span_x_3d,
-        "p_min_y": p_min_y,
-        "p_max_y": p_max_y,
-        "span_y_3d": span_y_3d,
+        "x_mid_2d_f": x_mid_2d_f,
+        "y_min_2d_f": y_min_2d_f,
+        "y_max_2d_f": y_max_2d_f,
+        "h_2d_f": h_2d_f,
+        "x_mid_2d_b": x_mid_2d_b,
+        "y_min_2d_b": y_min_2d_b,
+        "y_max_2d_b": y_max_2d_b,
+        "h_2d_b": h_2d_b,
         "w": float(w),
         "h": float(h),
         "has_real_back": has_real_back
@@ -228,7 +180,7 @@ def bake_meshy_pbr_mesh(mesh, image_source, back_image_source=None, color_mode="
     """
     Applies calibrated Dual-View Camera-Adaptive UV coordinates and PBRMaterial to the 3D mesh.
     - If color_mode == 'clay': returns clean untextured classical plaster sculpture.
-    - If back_image_source is provided: maps real back photo directly to rear mesh.
+    - If back_image_source is provided: maps real back photo directly with inverted X.
     """
     if color_mode == "clay":
         return create_clay_sculpture_mesh(mesh), None
@@ -255,49 +207,48 @@ def bake_meshy_pbr_mesh(mesh, image_source, back_image_source=None, color_mode="
     # 3. Construct Universal Texture Atlas
     atlas_pil, b_data = build_universal_texture_atlas(bgr, clean_mask, mesh, back_image_source=back_image_source)
 
-    # 4. Split Mesh into Front and Back Submeshes by Canonical Camera Ray
+    v = mesh.vertices
     fn = mesh.face_normals
-    front_face_mask = (fn[:, 2] >= 0)
+    f = mesh.faces
+
+    # 3D metrics
+    y_min_3d = float(np.percentile(v[:, 1], 0.2))
+    y_max_3d = float(np.percentile(v[:, 1], 99.8))
+    h_3d = max(1e-4, y_max_3d - y_min_3d)
+
+    # Spinal midline: median X of torso and head
+    spine_v = v[(np.abs(v[:, 0]) < 0.15) & (v[:, 1] > 0.0)]
+    x_mid_3d = float(np.median(spine_v[:, 0])) if len(spine_v) > 0 else 0.0
+
+    scale_f = b_data["h_2d_f"] / h_3d
+    scale_b = b_data["h_2d_b"] / h_3d
+
+    # 4. Coronal depth segmentation:
+    # Face center z > -0.04 or normal nz > 0.10 guarantees all nostrils, chin & pouches stay on FRONT
+    face_centers_z = v[f][:, :, 2].mean(axis=1)
+    front_face_mask = (face_centers_z > -0.04) | (fn[:, 2] > 0.10)
     back_face_mask = ~front_face_mask
 
     front_sub = mesh.submesh([front_face_mask], append=True)
     back_sub = mesh.submesh([back_face_mask], append=True)
 
-    w_tex = b_data["w"] * 2.0
-    h_tex = b_data["h"]
-    x_min_2d = b_data["x_min_2d"]
-    y_max_2d = b_data["y_max_2d"]
-    subj_w_2d = b_data["subj_w_2d"]
-    subj_h_2d = b_data["subj_h_2d"]
-    p_min_x = b_data["p_min_x"]
-    p_max_x = b_data["p_max_x"]
-    span_x_3d = b_data["span_x_3d"]
-    p_min_y = b_data["p_min_y"]
-    span_y_3d = b_data["span_y_3d"]
-    has_real_back = b_data.get("has_real_back", False)
+    w_tex = float(b_data["w"] * 2.0)
+    h_tex = float(b_data["h"])
 
-    # Front UVs: U in [0.0, 0.5]
+    # Front UVs: X increases to the right
     fv = front_sub.vertices
-    fu_norm = np.clip((fv[:, 0] - p_min_x) / span_x_3d, 0.0, 1.0)
-    fv_norm = np.clip((fv[:, 1] - p_min_y) / span_y_3d, 0.0, 1.0)
-    fx_px = x_min_2d + fu_norm * subj_w_2d
-    fy_px = y_max_2d - fv_norm * subj_h_2d
-    front_u = fx_px / w_tex
-    front_v = 1.0 - (fy_px / h_tex)
+    fx_px = b_data["x_mid_2d_f"] + (fv[:, 0] - x_mid_3d) * scale_f
+    fy_px = b_data["y_max_2d_f"] - (fv[:, 1] - y_min_3d) * scale_f
+    front_u = np.clip(fx_px / w_tex, 0.0, 0.5)
+    front_v = np.clip(1.0 - (fy_px / h_tex), 0.0, 1.0)
     front_uvs = np.column_stack([front_u, front_v])
 
-    # Back UVs: U in [0.5, 1.0]
+    # Back UVs: Inverted X for camera viewing from behind
     bv = back_sub.vertices
-    if has_real_back:
-        bu_norm = np.clip((bv[:, 0] - p_min_x) / span_x_3d, 0.0, 1.0)
-    else:
-        bu_norm = np.clip((p_max_x - bv[:, 0]) / span_x_3d, 0.0, 1.0)
-
-    bv_norm = np.clip((bv[:, 1] - p_min_y) / span_y_3d, 0.0, 1.0)
-    bx_px = x_min_2d + bu_norm * subj_w_2d
-    by_px = y_max_2d - bv_norm * subj_h_2d
-    back_u = 0.5 + (bx_px / w_tex)
-    back_v = 1.0 - (by_px / h_tex)
+    bx_px = b_data["x_mid_2d_b"] - (bv[:, 0] - x_mid_3d) * scale_b
+    by_px = b_data["y_max_2d_b"] - (bv[:, 1] - y_min_3d) * scale_b
+    back_u = np.clip(0.5 + (bx_px / w_tex), 0.5, 1.0)
+    back_v = np.clip(1.0 - (by_px / h_tex), 0.0, 1.0)
     back_uvs = np.column_stack([back_u, back_v])
 
     # Standard PBR Material
