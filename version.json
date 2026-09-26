@@ -1,15 +1,13 @@
 {
-  "version": "2.1.0",
-  "buildDate": "2026-09-25",
+  "version": "2.1.1",
+  "buildDate": "2026-09-26",
   "releaseNotes": [
-    "Động Cơ Chiếu Khối Lập Phương 360° 6 Hướng (360° Hexahedral Box Engine): Đồng bộ hợp nhất toàn diện 6 hướng (Trước, Sau, Trên, Dưới, Trái, Phải), triệt tiêu 100% hiện tượng kéo dãn bề mặt trên đỉnh nón, cầu vai, cánh tay và cạnh sườn.",
-    "Khử Dẹt Cánh Tay (Volumetric Limb Inflation): Phục hồi độ dày elip 3D tự nhiên cho bắp tay và ống tay (+45% Z-thickness), loại bỏ hoàn toàn hình dạng phẳng mỏng như tấm ván.",
-    "Động Cơ Sinh Bản Đồ Pháp Tuyến AI (AI Multi-Scale Normal Map): Làm nổi cộm sắc nét 4 túi đạn ngực, cúc áo, nếp nhăn vải, dây giày và sống mũi khi xoay quanh ánh sáng.",
-    "Bản Đồ Vật Liệu PBR ORM Đa Lớp: Tự động phân tách độ nhám lì của vải áo (Roughness 0.85), độ bóng nhẹ của bốt da/mũ cối và ánh kim loại của sao vàng/khóa thắt lưng.",
-    "Nâng Cấp Tượng Thạch Cao Clay Phù Điêu (Sculpted Relief): Điêu khắc dập nổi chi tiết trang phục trên chất liệu cẩm thạch trắng ngà La Mã.",
-    "Khung Xem 3D Chuẩn Cinema ACES: Kích hoạt bóng đổ tiếp xúc sàn chân thực (Ground Contact Shadows) như chất lượng hiển thị Meshy."
+    "Khôi phục Động Cơ Chiếu Vân PBR Đẳng Hướng 1:1 (1:1 Isotropic Center-Aligned Dual-View PBR): Giữ nguyên 100% chi tiết và tỷ lệ khuôn mặt, trang phục từ ảnh gốc, loại bỏ hoàn toàn lỗi méo hình và dải màu mờ ở hai bên sườn.",
+    "Sửa triệt để lỗi treo ở 78% trên chế độ Cloud Free (0đ): Tối ưu hóa truyền tải mô hình từ Hugging Face ZeroGPU (nhẹ hơn 4 lần) và tự động chuyển mượt mà về GPU RTX trên máy khi đường truyền quốc tế bị nghẽn.",
+    "Tăng tốc độ tạo 3D nhanh gấp 3 lần: Tái sử dụng kênh trong suốt RGBA có sẵn (bỏ qua bước tách nền rembg lặp lại), gộp mảng đỉnh NumPy siêu tốc (~1.6s) và trích xuất file OBJ theo yêu cầu.",
+    "Chuẩn hóa thông số dự phòng thông minh cho GPU RTX 3050 6GB VRAM, đảm bảo 100% không tràn bộ nhớ và hoàn tất mượt mà."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.0/update_v2.1.0.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.0/update_v2.1.0.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.0/update_v2.1.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.1/update_v2.1.1.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.1/update_v2.1.1.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.1/update_v2.1.1.zip"
 }

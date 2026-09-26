@@ -39,7 +39,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.1.0"
+APP_VERSION = "v2.1.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -504,7 +504,14 @@ class AppApi:
         p = os.path.join(OUTPUT_DIR, item_id)
         src = os.path.join(p, f"model.{file_type}")
         if not os.path.exists(src):
-            return {"success": False, "error": f"Không tìm thấy file model.{file_type}"}
+            glb_src = os.path.join(p, "model.glb")
+            if file_type == "obj" and os.path.exists(glb_src):
+                try:
+                    trimesh.load(glb_src, force="mesh").export(src)
+                except Exception as e_obj:
+                    return {"success": False, "error": f"Lỗi chuyển đổi OBJ: {e_obj}"}
+            else:
+                return {"success": False, "error": f"Không tìm thấy file model.{file_type}"}
 
         default_filename = f"{item_id}.{file_type}"
         file_filter = (f"{file_type.upper()} 3D Model (*.{file_type})", "All Files (*.*)")
@@ -721,12 +728,18 @@ class AppApi:
     def _preprocess_hunyuan(self, file_path: str, task_id=None) -> Image.Image:
         self._progress("🤖 AI đang phân đoạn & tách sạch nền trong suốt 100%…", 10, task_id=task_id)
         orig = Image.open(file_path)
-        try:
-            os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
-            clean_rgba = rembg.remove(orig)
-        except Exception as e:
-            logging.warning(f"rembg remove warning: {e}")
-            clean_rgba = remove_background(orig.convert("RGB"))
+        clean_rgba = None
+        if orig.mode == "RGBA":
+            arr_check = np.array(orig)[:, :, 3]
+            if np.min(arr_check) < 200 and np.any(arr_check > 30):
+                clean_rgba = orig
+        if clean_rgba is None:
+            try:
+                os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
+                clean_rgba = rembg.remove(orig)
+            except Exception as e:
+                logging.warning(f"rembg remove warning: {e}")
+                clean_rgba = remove_background(orig.convert("RGB"))
 
         if clean_rgba.mode != "RGBA":
             clean_rgba = clean_rgba.convert("RGBA")
@@ -927,9 +940,8 @@ class AppApi:
                 except Exception as e_bake:
                     logging.warning(f"Meshy PBR Texture Engine fallback: {e_bake}")
 
-            self._progress("💾 Đang xuất tệp mô hình GLB và OBJ…", 88, task_id=task_id)
+            self._progress("💾 Đang xuất tệp mô hình GLB…", 88, task_id=task_id)
             meshes[0].export(glb_path)
-            meshes[0].export(obj_path)
 
             self.last_glb = glb_path
             self.last_obj = obj_path
@@ -1052,7 +1064,7 @@ class AppApi:
                 except Exception as e_clay:
                     logging.exception(f"Clay sculpture error: {e_clay}")
             else:
-                self._progress("🎨 AI đang nướng bản đồ vân PBR 360° 6 Hướng (Chất lượng Meshy)…", 85, task_id=task_id)
+                self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Tỷ lệ 1:1)…", 85, task_id=task_id)
                 try:
                     from texture_engine import bake_meshy_pbr_mesh
                     mesh, _ = bake_meshy_pbr_mesh(
@@ -1065,12 +1077,11 @@ class AppApi:
                 except Exception as e_col:
                     logging.exception(f"Meshy PBR Texture Engine error: {e_col}")
 
-            self._progress("💾 Đang xuất tệp mô hình GLB và OBJ sắc nét (95%)…", 95, task_id=task_id)
+            self._progress("💾 Đang xuất tệp mô hình GLB sắc nét (95%)…", 95, task_id=task_id)
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
 
             mesh.export(glb_path)
-            mesh.export(obj_path)
 
             self.last_glb = glb_path
             self.last_obj = obj_path
@@ -1216,8 +1227,10 @@ class AppApi:
                         25,
                         task_id=task_id
                     )
+                    fb_steps = min(int(num_steps), 10)
+                    fb_octree = min(int(octree_res), 192)
                     return self._gen_hunyuan3d_turbo(
-                        file_path, num_steps=num_steps, octree_res=octree_res,
+                        file_path, num_steps=fb_steps, octree_res=fb_octree,
                         target_dir=target_dir, task_id=task_id,
                         back_image=back_image, left_image=left_image, right_image=right_image,
                         color_mode=color_mode
@@ -1275,8 +1288,10 @@ class AppApi:
                         25,
                         task_id=task_id
                     )
+                    fb_steps = min(int(num_steps), 10)
+                    fb_octree = min(int(octree_res), 192)
                     return self._gen_hunyuan3d_turbo(
-                        file_path, num_steps=num_steps, octree_res=octree_res,
+                        file_path, num_steps=fb_steps, octree_res=fb_octree,
                         target_dir=target_dir, task_id=task_id,
                         back_image=back_image, left_image=left_image, right_image=right_image,
                         color_mode=color_mode
@@ -1311,9 +1326,23 @@ class AppApi:
     def export_file(self, file_type="glb"):
         src = self.last_glb if file_type == "glb" else self.last_obj
         if not src or not os.path.exists(src):
-            cand = os.path.join(self.last_folder, f"model.{file_type}")
-            if os.path.exists(cand):
+            cand = os.path.join(self.last_folder, f"model.{file_type}") if self.last_folder else ""
+            if cand and os.path.exists(cand):
                 src = cand
+            elif file_type == "obj":
+                # Generate OBJ on-demand from GLB when user clicks "Xuất OBJ"
+                glb_src = self.last_glb or (os.path.join(self.last_folder, "model.glb") if self.last_folder else "")
+                if glb_src and os.path.exists(glb_src):
+                    try:
+                        import trimesh
+                        obj_cand = os.path.join(os.path.dirname(glb_src), "model.obj")
+                        trimesh.load(glb_src, force="mesh").export(obj_cand)
+                        src = obj_cand
+                        self.last_obj = obj_cand
+                    except Exception as e_obj:
+                        return {"success": False, "error": f"Lỗi chuyển đổi OBJ: {e_obj}"}
+                else:
+                    return {"success": False, "error": "Chưa có mô hình 3D! Vui lòng tạo mô hình trước."}
             else:
                 return {"success": False, "error": "Chưa có mô hình 3D! Vui lòng tạo mô hình trước."}
 
@@ -1696,7 +1725,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.0.6</span>
+    <span class="ver" id="ver">v2.1.1</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>

@@ -4,7 +4,7 @@ title AI 3D Studio - NVIDIA RTX 3050 (SSD H:)
 cd /d "%~dp0"
 
 echo ========================================================
-echo   AI 3D STUDIO v2.0.1 - NVIDIA RTX 3050 & Hunyuan3D Turbo
+echo   AI 3D STUDIO v2.1.1 - NVIDIA RTX 3050 ^& Hunyuan3D Turbo
 echo ========================================================
 echo   Dang khoi chay ung dung AI 3D Studio...
 echo.
