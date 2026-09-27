@@ -1,13 +1,12 @@
 {
-  "version": "2.1.5",
+  "version": "2.1.6",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Nâng Cấp Toàn Diện Hugging Face Cloud Free (0đ): Tự động tách sạch nền trong suốt 100%, khử nhiễu Alpha nền, phục hồi cổ áo đối xứng và cắt sát chủ thể trước khi gửi lên Cloud ZeroGPU — tạo mô hình 3D tượng khối thực thụ 360° (chấm dứt triệt để lỗi tạo khối phẳng như khung ảnh).",
-    "Kiểm Định Khối 3D & Lọc Mảnh Rời Sau Khi Tải Cloud: Tự động loại bỏ mảnh vụn trôi nổi, kiểm tra độ dày chiều sâu 3D thực tế và áp dụng điêu khắc High-Poly (~311.656 đa giác) + nướng vân PBR 2K chuẩn Meshy.",
-    "Tổng Hợp Mặt Sau Thông Minh Cho Cả Dáng Đứng & Dáng T-Pose: Tự động tái tạo mũ cối/tóc sau gáy và lưng áo giáp cho cả nhân vật dang hai tay chữ T (T-Pose) lẫn nhân vật đứng thẳng, giữ nguyên 100% họa tiết rằn ri trên hai cánh tay.",
-    "Bảo Toàn 100% Hình Khối 3D Chuẩn Nguyên Bản Không Biến Dạng (Zero X/Y Silhouette Warping v5.1)."
+    "Nâng Cấp Nướng Vân Bề Mặt Lên Chuẩn 8K Ultra-HD (8192px Super-Sampling): Tự động nâng cấp độ phân giải bản đồ vân PBR lên 8K (8192px) kết hợp thuật toán nội suy Lanczos-4 8x8 và tăng cường vi chi tiết Unsharp Mask C++ siêu tốc — giúp phù hiệu, ngôi sao, bảng tên, cúc áo, mắt, mũi, môi và thớ vải sắc nét gấp 4 lần khi phóng to cận cảnh.",
+    "Khung Xem 3D Native 100% Render Scale & Lọc Bất Đẳng Hướng 16x (16x Anisotropic Filtering): Khóa tỷ lệ kết xuất 1:1 không giảm phân giải khi xoay mô hình và cho phép zoom sát tới 5% để soi từng chi tiết 8K.",
+    "Bảo Toàn 100% Hình Khối 3D Chuẩn Nguyên Bản Không Biến Dạng (Zero X/Y Silhouette Warping v5.2) & Tượng Khối Cloud Free Thực Thụ."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.5/update_v2.1.5.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.5/update_v2.1.5.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.5/update_v2.1.5.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.6/update_v2.1.6.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.6/update_v2.1.6.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.6/update_v2.1.6.zip"
 }

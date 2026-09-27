@@ -6423,6 +6423,18 @@ else
         loader.parse(buffer, '', (gltf) => {
           if (currentModel) scene.remove(currentModel);
           currentModel = gltf.scene || gltf.scenes[0];
+          const maxAniso = renderer.capabilities.getMaxAnisotropy();
+          currentModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+              const mats = Array.isArray(child.material) ? child.material : [child.material];
+              mats.forEach(m => {
+                if (m.map) {
+                  m.map.anisotropy = maxAniso;
+                  m.map.needsUpdate = true;
+                }
+              });
+            }
+          });
           scene.add(currentModel);
           dropOverlay.style.display = 'none';
           fitCameraToObject(currentModel);

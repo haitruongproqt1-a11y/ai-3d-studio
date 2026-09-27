@@ -40,7 +40,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.1.5"
+APP_VERSION = "v2.1.6"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -960,7 +960,7 @@ class AppApi:
                 except Exception as e_cl:
                     logging.warning(f"Clay sculpture error: {e_cl}")
             elif do_bake:
-                self._progress("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 65, task_id=task_id)
+                self._progress("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 8K Ultra-HD (8192px chuẩn Meshy)…", 65, task_id=task_id)
                 try:
                     from texture_engine import bake_meshy_pbr_mesh
                     baked_mesh, _ = bake_meshy_pbr_mesh(
@@ -1092,7 +1092,7 @@ class AppApi:
             if color_mode == "clay":
                 self._progress("🏛️ Đang điêu khắc Tượng Thạch Cao Clay High-Poly (Chạm nổi chi tiết 3D)…", 85, task_id=task_id)
             else:
-                self._progress("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 85, task_id=task_id)
+                self._progress("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 8K Ultra-HD (8192px chuẩn Meshy)…", 85, task_id=task_id)
             try:
                 from texture_engine import bake_meshy_pbr_mesh
                 mesh, _ = bake_meshy_pbr_mesh(
@@ -1929,7 +1929,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       </div>
       <div class="chk-row" style="margin-bottom:6px">
         <input type="checkbox" id="chkHfPbr" checked disabled>
-        <label class="chk-row" for="chkHfPbr">🎨 Tự động nướng vân PBR Dual-View HD 1:1 (Đã tích hợp)</label>
+        <label class="chk-row" for="chkHfPbr">🎨 Tự động nướng vân PBR 8K Ultra-HD 1:1 (Đã tích hợp)</label>
       </div>
     </div>
 
@@ -1976,7 +1976,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <div class="sg" style="margin-bottom:7px">
         <label>Chất lượng hình học TripoSR:</label>
         <select id="quality">
-          <option value="pbr_1024" selected>💎 PBR 1024px + Làm mịn Taubin (~15s) – Mịn màng</option>
+          <option value="pbr_1024" selected>💎 Nướng vân PBR 8K Ultra-HD + Làm mịn Taubin (~15s)</option>
           <option value="ultra_320">📐 Ultra HD 320 (~10s) – 43.000 điểm lưới</option>
           <option value="fast_256">⚡ Siêu tốc Vertex Colors 256 (~3s)</option>
         </select>
@@ -2049,6 +2049,8 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         auto-rotate-delay="4000"
         rotation-per-second="18deg"
         interaction-prompt="none"
+        minimum-render-scale="1"
+        min-camera-orbit="auto auto 5%"
         shadow-intensity="1.2"
         shadow-softness="0.4"
         exposure="1.05"

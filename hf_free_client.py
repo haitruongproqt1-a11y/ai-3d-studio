@@ -582,7 +582,7 @@ class HuggingFaceFreeClient:
                 progress_cb("🏛️ Đang điêu khắc Tượng Thạch Cao Clay High-Poly (Chạm nổi chi tiết 3D)…", 88)
         else:
             if progress_cb:
-                progress_cb("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 88)
+                progress_cb("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 8K Ultra-HD (8192px chuẩn Meshy)…", 88)
         baked_mesh, _ = bake_meshy_pbr_mesh(
             mesh, clean_front_path,
             back_image_source=clean_back_path,

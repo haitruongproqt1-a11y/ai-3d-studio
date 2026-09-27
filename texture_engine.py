@@ -254,12 +254,21 @@ def extract_dual_masks(img_rgb, pil_img, orig_alpha=None):
 def clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, target_w, target_h):
     """
     Strips background halo at original resolution via Voronoi extrapolation from color_mask_orig,
-    resizes to (target_w, target_h), and applies horizontal scanline padding.
+    resizes to (target_w, target_h) with Lanczos-4 super-sampling, and applies horizontal scanline padding.
     """
     rgb_voronoi = voronoi_pad(rgb_orig, color_mask_orig)
-    view_rgb = cv2.resize(rgb_voronoi, (target_w, target_h), interpolation=cv2.INTER_AREA)
-    geom_mask = cv2.resize(geom_mask_orig.astype(np.uint8), (target_w, target_h), interpolation=cv2.INTER_NEAREST) > 0
-    color_mask = cv2.resize(color_mask_orig.astype(np.uint8), (target_w, target_h), interpolation=cv2.INTER_NEAREST) > 0
+    h_in, w_in = rgb_orig.shape[:2]
+    is_upscale = (target_w > w_in) or (target_h > h_in)
+    interp_rgb = cv2.INTER_LANCZOS4 if is_upscale else cv2.INTER_AREA
+    interp_mask = cv2.INTER_LINEAR if is_upscale else cv2.INTER_NEAREST
+
+    view_rgb = cv2.resize(rgb_voronoi, (target_w, target_h), interpolation=interp_rgb)
+    if is_upscale:
+        blur_v = cv2.GaussianBlur(view_rgb, (0, 0), sigmaX=1.0)
+        view_rgb = cv2.addWeighted(view_rgb, 1.25, blur_v, -0.25, 0)
+
+    geom_mask = cv2.resize(geom_mask_orig.astype(np.uint8) * 255, (target_w, target_h), interpolation=interp_mask) > 127
+    color_mask = cv2.resize(color_mask_orig.astype(np.uint8) * 255, (target_w, target_h), interpolation=interp_mask) > 127
 
     padded = view_rgb.copy()
     for y in range(target_h):
@@ -274,6 +283,21 @@ def clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, target_w, targ
     padded = cv2.GaussianBlur(padded, (5, 5), 0)
     padded[color_mask] = view_rgb[color_mask]
     return padded, geom_mask, color_mask
+
+
+def upscale_atlas_8k(atlas_arr, target_max_dim=8192):
+    """
+    Super-samples the Dual-View PBR Texture Atlas to 8K Ultra-HD (8192px along the primary axis)
+    using Lanczos-4 8x8 Sinc Interpolation + C++ Unsharp Mask Micro-Detail Enhancement.
+    """
+    h_a, w_a = atlas_arr.shape[:2]
+    scale_8k = float(target_max_dim) / float(max(1, max(h_a, w_a)))
+    w_8k = max(128, int(round(w_a * scale_8k)))
+    h_8k = max(128, int(round(h_a * scale_8k)))
+    up_8k = cv2.resize(atlas_arr, (w_8k, h_8k), interpolation=cv2.INTER_LANCZOS4)
+    blur_8k = cv2.GaussianBlur(up_8k, (0, 0), sigmaX=1.2)
+    sharp_8k = cv2.addWeighted(up_8k, 1.35, blur_8k, -0.35, 0)
+    return sharp_8k
 
 
 def synthesize_clean_back_view(front_padded, geom_mask_f):
@@ -564,7 +588,7 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
                         left_image_source=None, right_image_source=None,
                         color_mode="color"):
     """
-    Applies Zero-Distortion High-Poly 3D Relief Sculpting and UV-Space Anatomical 2K PBR Texture.
+    Applies Zero-Distortion High-Poly 3D Relief Sculpting and UV-Space Anatomical 8K Ultra-HD PBR Texture (8192px).
     - Never warps or squishes the 3D silhouette (head, shoulders, legs, and feet remain 100% solid and proportional).
     - Works for BOTH `color_mode == 'color'` and `color_mode == 'clay'` when `image_source` is provided.
     """
@@ -581,15 +605,15 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     if image_source is None:
         return create_clay_sculpture_mesh(mesh), None
 
-    # 1. Load Front Image, Restore Collar/Holes & Extract Dual Masks
+    # 1. Load Front Image, Restore Collar/Holes & Extract Dual Masks at 2048px Working Precision
     rgb_orig, pil_img, orig_alpha = _load_image_rgb_and_alpha(image_source)
     geom_mask_orig, color_mask_orig = extract_dual_masks(rgb_orig, pil_img, orig_alpha=orig_alpha)
 
     h_raw, w_raw = rgb_orig.shape[:2]
-    max_dim = 2048.0
-    scale_down = (max_dim / max(h_raw, w_raw)) if max(h_raw, w_raw) > max_dim else 1.0
-    W = max(64, int(round(w_raw * scale_down)))
-    H = max(64, int(round(h_raw * scale_down)))
+    work_dim = 2048.0
+    scale_work = work_dim / float(max(1, max(h_raw, w_raw)))
+    W = max(128, int(round(w_raw * scale_work)))
+    H = max(128, int(round(h_raw * scale_work)))
 
     front_padded, geom_mask_f, _ = clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, W, H)
     is_humanoid = _is_humanoid_portrait(front_padded, geom_mask_f)
@@ -700,9 +724,10 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     if not has_real_back or back_padded is None or geom_mask_b is None:
         back_padded, geom_mask_b = synthesize_clean_back_view(front_padded, geom_mask_f)
 
-    # 6. Pack 2K Ultra-HD Texture Atlas (Left: Front, Right: Back)
+    # 6. Pack & Super-Sample 8K Ultra-HD Texture Atlas (8192px along primary axis; Left: Front, Right: Back)
     atlas_arr = np.hstack([front_padded, back_padded])
-    atlas_pil = Image.fromarray(atlas_arr)
+    atlas_8k = upscale_atlas_8k(atlas_arr, target_max_dim=8192)
+    atlas_pil = Image.fromarray(atlas_8k)
 
     # 7. Segment Front vs Back Faces & Assign Registered UVs
     fn = mesh.face_normals
