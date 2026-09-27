@@ -1,13 +1,13 @@
 {
-  "version": "2.1.7",
+  "version": "2.1.8",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Hiệu Chỉnh Khung Hình 3D Tỷ Lệ Chuẩn Ảnh Gốc (Frame Aspect Calibration v2.1.7): Tự động căn chỉnh tỷ lệ chiều cao/chiều rộng của mô hình 3D khớp hoàn hảo với tỷ lệ ảnh gốc (H/W), loại bỏ hoàn toàn độ bành ngang ~15% — mô hình người cao ráo, thanh mảnh đúng chuẩn như ảnh thật.",
-    "Nâng Cấp Lên Ultra 4K Topology (~556.000 Faces, ~278.000 Vertices): Tăng ngưỡng phân chia lưới lên 250.000 faces, tự động đạt chuẩn Meshy Ultra 4K với 556.064 tam giác và 278.024 đỉnh — chi tiết điêu khắc sắc nét gấp đôi phiên bản trước.",
-    "Bộ Điêu Khắc Chạm Nổi 3D Giải Phẫu Đa Tầng (Multi-Scale Anatomical Relief v6.0): Kết hợp 4 tần số Gaussian (Micro/Fine/Mid/Broad) + TopHat Morphology cho nổi khối cúc áo, huy chương, phù hiệu, nắp túi, cầu vai, vành mũ kê-pi — biên độ nổi tăng gấp 3 lần (0.018x chiều cao mesh vs 0.006x cũ).",
-    "Nướng Vân PBR 8K Ultra-HD (8192px): Duy trì chuẩn nướng vân 8K và lọc bất đẳng hướng 16x từ v2.1.6."
+    "Nâng Cấp Meshy AI 7.1 Ultra 4K (Mới Nhất Tháng 9/2026): Chuyển sang mô hình AI Meshy 7.1 với geometry_resolution='4k', should_remesh=true, should_texture=true — chất lượng mô hình đỉnh cao nhất hiện tại của Meshy, 556.056 tam giác / 278.012 đỉnh chuẩn chi tiết cao.",
+    "Hiệu Chỉnh Khung Hình 3D Tỷ Lệ Chuẩn Ảnh Gốc (v2.1.7): Loại bỏ hoàn toàn độ bành ngang ~15%.",
+    "Ultra 4K Topology (556K faces) + Multi-Scale 3D Relief v6.0 (v2.1.7): Điêu khắc nổi sâu 3x, cúc áo / huy chương / phù hiệu nổi khối 3D.",
+    "Nướng Vân PBR 8K Ultra-HD (v2.1.6): Duy trì chuẩn 8K và lọc bất đẳng hướng 16x."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.7/update_v2.1.7.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.7/update_v2.1.7.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.7/update_v2.1.7.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.8/update_v2.1.8.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.8/update_v2.1.8.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.8/update_v2.1.8.zip"
 }

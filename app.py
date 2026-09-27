@@ -40,7 +40,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.1.7"
+APP_VERSION = "v2.1.8"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1157,10 +1157,15 @@ class AppApi:
                 "error": "Chưa cấu hình Meshy API Key! Vui lòng bấm '🔑 Đổi Key' hoặc nút bên dưới để dán API Key từ meshy.ai."
             }
         try:
-            self._progress("📤 Đang tối ưu ảnh và gửi yêu cầu tới máy chủ Meshy.ai Cloud…", 10, task_id=task_id)
-            meshy_task_id = self.meshy_client.create_image_to_3d_task(file_path, enable_pbr=enable_pbr)
+            self._progress("📤 Đang tối ưu ảnh và gửi yêu cầu tới Meshy AI 7.1 Ultra 4K Cloud…", 10, task_id=task_id)
+            meshy_task_id = self.meshy_client.create_image_to_3d_task(
+                file_path,
+                enable_pbr=enable_pbr,
+                ai_model="meshy-7.1",
+                geometry_resolution="4k"
+            )
 
-            self._progress("⏳ Đang xếp hàng xử lý trên cụm máy chủ GPU A100 Meshy.ai…", 18, task_id=task_id)
+            self._progress("⏳ Meshy 7.1 đang xử lý Ultra 4K trên cụm GPU A100…", 18, task_id=task_id)
 
             def _step_cb(msg, pct):
                 self._progress(msg, pct, task_id=task_id)
@@ -1196,7 +1201,7 @@ class AppApi:
             self.last_obj = obj_path
             self.last_folder = item_dir
 
-            eng_name = "✨ Meshy AI Cloud (Thạch Cao Clay)" if color_mode == "clay" else "✨ Meshy AI Cloud (Hoàn Hảo 100%)"
+            eng_name = "✨ Meshy 7.1 Cloud (Thạch Cao Clay Ultra 4K)" if color_mode == "clay" else "✨ Meshy 7.1 Cloud (Ultra 4K PBR)"
 
             _save_model_metadata(
                 item_dir,

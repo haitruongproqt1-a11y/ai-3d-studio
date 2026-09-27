@@ -63,9 +63,10 @@ class MeshyClient:
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
             return f"data:{mime};base64,{b64}"
 
-    def create_image_to_3d_task(self, image_path: str, enable_pbr: bool = True, ai_model: str = "latest") -> str:
+    def create_image_to_3d_task(self, image_path: str, enable_pbr: bool = True, ai_model: str = "meshy-7.1",
+                                geometry_resolution: str = "4k") -> str:
         """
-        Submit image-to-3d request to Meshy.ai.
+        Submit image-to-3d request to Meshy.ai using Meshy 7.1 with Ultra 4K geometry.
         Returns the task_id.
         """
         if not self.has_valid_key():
@@ -76,7 +77,11 @@ class MeshyClient:
         payload = {
             "image_url": data_uri,
             "enable_pbr": bool(enable_pbr),
-            "ai_model": ai_model or "latest"
+            "ai_model": ai_model or "meshy-7.1",
+            "geometry_resolution": geometry_resolution,
+            "should_remesh": True,
+            "target_polycount": 100000,
+            "should_texture": True,
         }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -146,7 +151,7 @@ class MeshyClient:
 
             if status == "SUCCEEDED":
                 if progress_callback:
-                    progress_callback("✅ Meshy AI đã hoàn thành mô hình 3D! Đang tải tài nguyên...", 92)
+                    progress_callback("✅ Meshy 7.1 Ultra 4K đã hoàn thành mô hình 3D! Đang tải tài nguyên...", 92)
                 return data
             elif status == "FAILED":
                 task_err = data.get("task_error", {})
@@ -157,10 +162,10 @@ class MeshyClient:
             elif status == "IN_PROGRESS":
                 pct = max(20, min(90, int(progress)))
                 if progress_callback:
-                    progress_callback(f"✨ Meshy AI đang tái tạo 3D & nướng vật liệu PBR ({pct}%)…", pct)
+                    progress_callback(f"✨ Meshy 7.1 đang điêu khắc Ultra 4K & nướng PBR ({pct}%)…", pct)
             else: # PENDING
                 if progress_callback:
-                    progress_callback("⏳ Meshy AI đang xếp hàng trên cụm máy chủ GPU A100…", 15)
+                    progress_callback("⏳ Meshy 7.1 đang xếp hàng trên cụm máy chủ GPU A100…", 15)
 
             time.sleep(poll_interval)
 
