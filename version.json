@@ -1,13 +1,14 @@
 {
-  "version": "2.1.1",
-  "buildDate": "2026-09-26",
+  "version": "2.1.2",
+  "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Khôi phục Động Cơ Chiếu Vân PBR Đẳng Hướng 1:1 (1:1 Isotropic Center-Aligned Dual-View PBR): Giữ nguyên 100% chi tiết và tỷ lệ khuôn mặt, trang phục từ ảnh gốc, loại bỏ hoàn toàn lỗi méo hình và dải màu mờ ở hai bên sườn.",
-    "Sửa triệt để lỗi treo ở 78% trên chế độ Cloud Free (0đ): Tối ưu hóa truyền tải mô hình từ Hugging Face ZeroGPU (nhẹ hơn 4 lần) và tự động chuyển mượt mà về GPU RTX trên máy khi đường truyền quốc tế bị nghẽn.",
-    "Tăng tốc độ tạo 3D nhanh gấp 3 lần: Tái sử dụng kênh trong suốt RGBA có sẵn (bỏ qua bước tách nền rembg lặp lại), gộp mảng đỉnh NumPy siêu tốc (~1.6s) và trích xuất file OBJ theo yêu cầu.",
-    "Chuẩn hóa thông số dự phòng thông minh cho GPU RTX 3050 6GB VRAM, đảm bảo 100% không tràn bộ nhớ và hoàn tất mượt mà."
+    "Động Cơ Khớp Đường Viền Sinh Học 3 Điểm 2K (3-Point Anatomical Scanline Registration v4.0): Khóa chuẩn 100% khuôn mặt, sống mũi, mắt, miệng, cầu vai quân hàm và toàn bộ cánh tay khớp 1:1 với ảnh chụp.",
+    "Tách Biệt Kép Mặt Nạ Hình Học & Mặt Nạ Màu Sắc (Dual-Mask Separation): Giữ nguyên 100% đỉnh tóc và vành tai trên mặt nạ hình học trong khi gọt sạch 100% viền xám phông nền trên mặt nạ màu sắc.",
+    "Kéo Biên Nội Vùng EDT (Euclidean Distance Transform Pull-In): Đảm bảo bằng toán học 100.0% mọi đỉnh 3D đều lấy màu bên trong chủ thể, triệt tiêu vĩnh viễn lỗi lem màu xám ở cánh tay phải và má phải.",
+    "Tổng Hợp Mặt Sau May Đo Chuẩn Xác (Clean Tailored Back Synthesis): Tự động tái tạo tóc sau gáy, da cổ và lưng áo quân phục phẳng đẹp, loại bỏ hoàn toàn cúc áo/cà vạt/mũ bị in ngược ra sau lưng.",
+    "Nâng Cấp Độ Phân Giải Vân Bề Mặt Lên 2K Ultra-HD (2048px): Tăng gấp 4 lần mật độ điểm ảnh trên khuôn mặt, bảng tên và quân hiệu."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.1/update_v2.1.1.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.1/update_v2.1.1.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.1/update_v2.1.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.2/update_v2.1.2.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.2/update_v2.1.2.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.2/update_v2.1.2.zip"
 }
