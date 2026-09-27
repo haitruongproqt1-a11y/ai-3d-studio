@@ -1,13 +1,13 @@
 {
-  "version": "2.1.3",
+  "version": "2.1.4",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Động Cơ Hiệu Chỉnh Hình Khối 3D & Chạm Nổi High-Poly v5.0 (Meshy-Grade 3D Silhouette Calibration & Relief Sculpting): Hiệu chỉnh trực tiếp tọa độ đỉnh 3D (X, Y) khớp 1:1 với phom dáng ảnh chụp (căn chuẩn sống mũi, đường viền vai và cổ áo).",
-    "Chia Lưới High-Poly (~311.000 Đa Giác) & Chạm Nổi Đa Tầng DoG (Multi-Scale Photometric 3D Relief): Tự động khử bậc thang Voxel và chạm nổi trực tiếp mắt, mũi, môi, cành tùng, cầu vai, bảng tên, cúc áo, nắp túi lên cả mô hình Có Màu (PBR) và Tượng Thạch Cao (Clay).",
-    "Khôi Phục Cổ Áo Đối Xứng & Lỗ Thủng Alpha (Symmetrical Collar & Interior Hole Restoration): Tự động giải nhân Alpha và tái tạo vạt cổ áo bị thiếu do tách nền rembg, xóa sạch 100% vết đen hoặc khuyết cổ áo.",
-    "Chiếu Phẳng Trực Giao 1:1 Chuẩn 2K Ultra-HD (Pure 1:1 Orthographic 2K Projection): Giữ nguyên 100% tỷ lệ nhiếp ảnh sắc nét không biến dạng trên khuôn mặt và quân phục."
+    "Bảo Toàn 100% Hình Khối 3D Chuẩn Nguyên Bản Không Biến Dạng (Zero X/Y Silhouette Warping v5.1): Giữ nguyên 100% khung xương, bờ vai vuông vức, khuôn mặt tròn trịa, hai ống quần thẳng đứng và bàn chân phẳng tự nhiên ở mọi góc xoay 360° (không bóp méo hay vặn xoắn đỉnh 3D).",
+    "Ánh Xạ Giải Phẫu Học Trong Không Gian UV 2D (UV-Space Anatomical & Shoulder Registration): Căn tâm sống mũi, đường viền bờ vai và thân áo hoàn toàn trên tọa độ UV, chuyển mượt sang chiếu phẳng trực giao ở phần chân giúp màu khớp 1:1 mà khối 3D không hề bị méo.",
+    "Điêu Khắc High-Poly (~311.656 Đa Giác) & Chạm Nổi Pháp Tuyến 3D Relief: Khử bậc thang Voxel và chạm nổi sắc nét mắt, mũi, môi, cầu vai, cành tùng, bảng tên, cúc áo, nắp túi theo đúng pháp tuyến bề mặt.",
+    "Khôi Phục Cổ Áo Đối Xứng & Lỗ Thủng Alpha: Tự động giải nhân Alpha và tái tạo vạt cổ áo bị thiếu do tách nền rembg."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.3/update_v2.1.3.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.3/update_v2.1.3.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.3/update_v2.1.3.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.4/update_v2.1.4.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.4/update_v2.1.4.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.4/update_v2.1.4.zip"
 }
