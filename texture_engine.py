@@ -618,19 +618,47 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     front_padded, geom_mask_f, _ = clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, W, H)
     is_humanoid = _is_humanoid_portrait(front_padded, geom_mask_f)
 
-    # 2. Pre-Subdivision Taubin Voxel Staircase Removal + High-Poly Subdivision (ZERO X/Y Silhouette Warping!)
+    # 2. Frame Calibration (Precise 1:1 Aspect Ratio Alignment)
+    # Calibrates 3D mesh width and depth to match photo foreground silhouette, eliminating squatting/stretching.
+    try:
+        coords_geom = np.nonzero(geom_mask_f)
+        if len(coords_geom[0]) > 50:
+            h_2d_fg = float(coords_geom[0].max() - coords_geom[0].min())
+            w_2d_fg = float(coords_geom[1].max() - coords_geom[1].min())
+            if w_2d_fg > 10 and h_2d_fg > 10:
+                ratio_2d = h_2d_fg / w_2d_fg
+                ext_3d = mesh.extents
+                h_3d_box = float(ext_3d[1])
+                w_3d_box = float(ext_3d[0])
+                if w_3d_box > 1e-4:
+                    ratio_3d = h_3d_box / w_3d_box
+                    sx = np.clip(ratio_3d / ratio_2d, 0.72, 1.35)
+                    if abs(sx - 1.0) > 0.015:
+                        logging.info(f"Frame Aspect Calibration: 2D={ratio_2d:.3f}, 3D={ratio_3d:.3f} -> scale_x={sx:.4f}")
+                        v_cal = mesh.vertices.copy()
+                        x_center = float(np.median(v_cal[:, 0]))
+                        v_cal[:, 0] = x_center + (v_cal[:, 0] - x_center) * sx
+                        sz = float(np.clip(np.sqrt(sx), 0.85, 1.18))
+                        z_center = float(np.median(v_cal[:, 2]))
+                        v_cal[:, 2] = z_center + (v_cal[:, 2] - z_center) * sz
+                        mesh.vertices = v_cal
+    except Exception as e_calib:
+        logging.warning(f"Frame calibration notice: {e_calib}")
+
+    # 3. Pre-Subdivision Taubin Voxel Staircase Removal + Ultra 4K Subdivision (~556K faces)
     try:
         filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=4)
     except Exception as e:
         logging.warning(f"Taubin pre-smoothing notice: {e}")
 
-    if len(mesh.faces) < 120000:
+    if len(mesh.faces) < 250000:
         try:
             mesh = mesh.subdivide()
+            logging.info(f"Subdivided mesh to Ultra 4K topology: {len(mesh.faces)} faces, {len(mesh.vertices)} vertices")
         except Exception as e:
             logging.warning(f"Mesh subdivision notice: {e}")
 
-    # 3. Compute 3D Slice Profiles on the Un-Warped Subdivided Mesh
+    # 4. Compute 3D Slice Profiles on the Calibrated Subdivided Mesh
     v = mesh.vertices.copy()
     vn = mesh.vertex_normals.copy()
 
@@ -673,31 +701,55 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     else:
         nose_x_3d = float(np.median(x3_mid_s))
 
-    # 4. Compute Registered Front UV Coordinates (fx_all, fy_all) & Apply Normal-Only 3D Relief Sculpting
+    # 5. Compute Registered Front UV Coordinates (fx_all, fy_all) & Apply Multi-Scale 3D Relief Sculpting
     fx_all, fy_all = _compute_anatomical_uv_mapping(
         v, geom_mask_f, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
         nose_x_3d, is_humanoid=is_humanoid, is_back=False
     )
 
     gray_f = cv2.cvtColor(front_padded, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-    g_fine = ndi.gaussian_filter(gray_f, sigma=0.8) - ndi.gaussian_filter(gray_f, sigma=3.5)
-    g_mid = ndi.gaussian_filter(gray_f, sigma=2.0) - ndi.gaussian_filter(gray_f, sigma=10.0)
-    contrast = np.abs(gray_f - ndi.gaussian_filter(gray_f, sigma=5.0))
-    bilateral_w = 1.0 / (1.0 + (contrast / 0.18) ** 2)
+
+    # TopHat filter for dome buttons, pins, medals, badges
+    k_btn = max(5, int(round(h_raw * 0.007)) | 1)
+    kernel_btn = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_btn, k_btn))
+    gray_u8 = (gray_f * 255).astype(np.uint8)
+    tophat_btn = cv2.morphologyEx(gray_u8, cv2.MORPH_TOPHAT, kernel_btn).astype(np.float32) / 255.0
+
+    # Multi-band frequency decomposition
+    g_micro = ndi.gaussian_filter(gray_f, sigma=0.8) - ndi.gaussian_filter(gray_f, sigma=2.2)
+    g_fine = ndi.gaussian_filter(gray_f, sigma=1.2) - ndi.gaussian_filter(gray_f, sigma=4.5)
+    g_mid = ndi.gaussian_filter(gray_f, sigma=3.5) - ndi.gaussian_filter(gray_f, sigma=14.0)
+    g_broad = ndi.gaussian_filter(gray_f, sigma=9.0) - ndi.gaussian_filter(gray_f, sigma=30.0)
+
+    contrast = np.abs(gray_f - ndi.gaussian_filter(gray_f, sigma=6.0))
+    bilateral_w = 1.0 / (1.0 + (contrast / 0.22) ** 2)
     dist_in = ndi.distance_transform_edt(geom_mask_f)
-    edge_taper = np.clip((dist_in - 4.0) / 8.0, 0.0, 1.0)
-    relief_2d = np.clip((0.65 * g_fine + 0.35 * g_mid) * bilateral_w, -0.15, 0.15) * edge_taper
+    edge_taper = np.clip((dist_in - 5.0) / 10.0, 0.0, 1.0)
+
+    relief_combined = (
+        0.35 * g_micro +
+        0.40 * g_fine +
+        0.30 * g_mid +
+        0.15 * g_broad +
+        0.60 * tophat_btn
+    ) * bilateral_w * edge_taper
+
+    relief_2d = np.clip(relief_combined, -0.28, 0.28)
 
     sampled_relief = ndi.map_coordinates(relief_2d, [fy_all, fx_all], order=1, mode="nearest")
     v_zmin = np.interp(s_3d, s_grid, z3_min_s)
     v_zmax = np.interp(s_3d, s_grid, z3_max_s)
     v_z_rel = np.clip((v[:, 2] - v_zmin) / np.maximum(0.05, v_zmax - v_zmin), 0.0, 1.0)
-    front_w = np.clip((vn[:, 2] - 0.20) / 0.45, 0.0, 1.0) * np.clip((v_z_rel - 0.38) / 0.25, 0.0, 1.0)
+    front_w = np.clip((vn[:, 2] - 0.10) / 0.40, 0.0, 1.0) * np.clip((v_z_rel - 0.28) / 0.25, 0.0, 1.0)
 
-    disp_amp = 0.0062 * h_3d
-    mesh.vertices = v + ((sampled_relief * front_w * disp_amp)[:, None] * vn)
+    disp_amp = 0.018 * h_3d
+    disp_dir = 0.65 * vn + 0.35 * np.array([0.0, 0.0, 1.0])
+    disp_dir_norm = np.linalg.norm(disp_dir, axis=1, keepdims=True)
+    disp_dir = np.where(disp_dir_norm > 1e-4, disp_dir / disp_dir_norm, vn)
+
+    mesh.vertices = v + ((sampled_relief * front_w * disp_amp)[:, None] * disp_dir)
     try:
-        filter_taubin(mesh, lamb=0.32, nu=-0.34, iterations=1)
+        filter_taubin(mesh, lamb=0.08, nu=-0.085, iterations=1)
     except Exception:
         pass
 

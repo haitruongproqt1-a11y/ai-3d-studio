@@ -1,12 +1,13 @@
 {
-  "version": "2.1.6",
+  "version": "2.1.7",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Nâng Cấp Nướng Vân Bề Mặt Lên Chuẩn 8K Ultra-HD (8192px Super-Sampling): Tự động nâng cấp độ phân giải bản đồ vân PBR lên 8K (8192px) kết hợp thuật toán nội suy Lanczos-4 8x8 và tăng cường vi chi tiết Unsharp Mask C++ siêu tốc — giúp phù hiệu, ngôi sao, bảng tên, cúc áo, mắt, mũi, môi và thớ vải sắc nét gấp 4 lần khi phóng to cận cảnh.",
-    "Khung Xem 3D Native 100% Render Scale & Lọc Bất Đẳng Hướng 16x (16x Anisotropic Filtering): Khóa tỷ lệ kết xuất 1:1 không giảm phân giải khi xoay mô hình và cho phép zoom sát tới 5% để soi từng chi tiết 8K.",
-    "Bảo Toàn 100% Hình Khối 3D Chuẩn Nguyên Bản Không Biến Dạng (Zero X/Y Silhouette Warping v5.2) & Tượng Khối Cloud Free Thực Thụ."
+    "Hiệu Chỉnh Khung Hình 3D Tỷ Lệ Chuẩn Ảnh Gốc (Frame Aspect Calibration v2.1.7): Tự động căn chỉnh tỷ lệ chiều cao/chiều rộng của mô hình 3D khớp hoàn hảo với tỷ lệ ảnh gốc (H/W), loại bỏ hoàn toàn độ bành ngang ~15% — mô hình người cao ráo, thanh mảnh đúng chuẩn như ảnh thật.",
+    "Nâng Cấp Lên Ultra 4K Topology (~556.000 Faces, ~278.000 Vertices): Tăng ngưỡng phân chia lưới lên 250.000 faces, tự động đạt chuẩn Meshy Ultra 4K với 556.064 tam giác và 278.024 đỉnh — chi tiết điêu khắc sắc nét gấp đôi phiên bản trước.",
+    "Bộ Điêu Khắc Chạm Nổi 3D Giải Phẫu Đa Tầng (Multi-Scale Anatomical Relief v6.0): Kết hợp 4 tần số Gaussian (Micro/Fine/Mid/Broad) + TopHat Morphology cho nổi khối cúc áo, huy chương, phù hiệu, nắp túi, cầu vai, vành mũ kê-pi — biên độ nổi tăng gấp 3 lần (0.018x chiều cao mesh vs 0.006x cũ).",
+    "Nướng Vân PBR 8K Ultra-HD (8192px): Duy trì chuẩn nướng vân 8K và lọc bất đẳng hướng 16x từ v2.1.6."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.6/update_v2.1.6.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.6/update_v2.1.6.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.6/update_v2.1.6.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.7/update_v2.1.7.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.7/update_v2.1.7.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.7/update_v2.1.7.zip"
 }
