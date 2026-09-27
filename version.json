@@ -1,13 +1,13 @@
 {
-  "version": "2.1.4",
+  "version": "2.1.5",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Bảo Toàn 100% Hình Khối 3D Chuẩn Nguyên Bản Không Biến Dạng (Zero X/Y Silhouette Warping v5.1): Giữ nguyên 100% khung xương, bờ vai vuông vức, khuôn mặt tròn trịa, hai ống quần thẳng đứng và bàn chân phẳng tự nhiên ở mọi góc xoay 360° (không bóp méo hay vặn xoắn đỉnh 3D).",
-    "Ánh Xạ Giải Phẫu Học Trong Không Gian UV 2D (UV-Space Anatomical & Shoulder Registration): Căn tâm sống mũi, đường viền bờ vai và thân áo hoàn toàn trên tọa độ UV, chuyển mượt sang chiếu phẳng trực giao ở phần chân giúp màu khớp 1:1 mà khối 3D không hề bị méo.",
-    "Điêu Khắc High-Poly (~311.656 Đa Giác) & Chạm Nổi Pháp Tuyến 3D Relief: Khử bậc thang Voxel và chạm nổi sắc nét mắt, mũi, môi, cầu vai, cành tùng, bảng tên, cúc áo, nắp túi theo đúng pháp tuyến bề mặt.",
-    "Khôi Phục Cổ Áo Đối Xứng & Lỗ Thủng Alpha: Tự động giải nhân Alpha và tái tạo vạt cổ áo bị thiếu do tách nền rembg."
+    "Nâng Cấp Toàn Diện Hugging Face Cloud Free (0đ): Tự động tách sạch nền trong suốt 100%, khử nhiễu Alpha nền, phục hồi cổ áo đối xứng và cắt sát chủ thể trước khi gửi lên Cloud ZeroGPU — tạo mô hình 3D tượng khối thực thụ 360° (chấm dứt triệt để lỗi tạo khối phẳng như khung ảnh).",
+    "Kiểm Định Khối 3D & Lọc Mảnh Rời Sau Khi Tải Cloud: Tự động loại bỏ mảnh vụn trôi nổi, kiểm tra độ dày chiều sâu 3D thực tế và áp dụng điêu khắc High-Poly (~311.656 đa giác) + nướng vân PBR 2K chuẩn Meshy.",
+    "Tổng Hợp Mặt Sau Thông Minh Cho Cả Dáng Đứng & Dáng T-Pose: Tự động tái tạo mũ cối/tóc sau gáy và lưng áo giáp cho cả nhân vật dang hai tay chữ T (T-Pose) lẫn nhân vật đứng thẳng, giữ nguyên 100% họa tiết rằn ri trên hai cánh tay.",
+    "Bảo Toàn 100% Hình Khối 3D Chuẩn Nguyên Bản Không Biến Dạng (Zero X/Y Silhouette Warping v5.1)."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.4/update_v2.1.4.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.4/update_v2.1.4.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.4/update_v2.1.4.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.5/update_v2.1.5.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.5/update_v2.1.5.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.5/update_v2.1.5.zip"
 }

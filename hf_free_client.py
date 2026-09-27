@@ -219,8 +219,113 @@ class HuggingFaceFreeClient:
 
         return os.path.exists(target_path) and os.path.getsize(target_path) > 1024
 
+    def _prepare_clean_rgba_input(self, img_path: str, out_path: str, progress_cb=None) -> tuple:
+        """
+        Guarantees that the image sent to Hugging Face Cloud 3D is a cleanly segmented,
+        collar-repaired, tightly cropped RGBA PNG with 100% transparent background (alpha = 0).
+        This prevents Cloud 3D from ever treating the photo background as a flat rectangular picture frame.
+        Returns (saved_rgba_path, needs_cloud_rembg).
+        """
+        import numpy as np
+        import scipy.ndimage as ndi
+
+        orig = Image.open(img_path)
+        orig_rgb = np.array(orig.convert("RGB"))
+        clean_rgba = None
+
+        if orig.mode == "RGBA":
+            arr_a = np.array(orig)[:, :, 3]
+            # Must have genuine transparency around the borders (at least 12% transparent and border median == 0)
+            border_a = np.concatenate([arr_a[0, :], arr_a[-1, :], arr_a[:, 0], arr_a[:, -1]])
+            if np.min(arr_a) < 80 and np.mean(arr_a < 30) >= 0.12 and np.median(border_a) < 15:
+                clean_rgba = orig
+
+        if clean_rgba is None:
+            if progress_cb:
+                progress_cb("🤖 AI đang tách sạch nền trong suốt 100% (Chống tạo khung ảnh phẳng)…", 18)
+            try:
+                cache_u2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", "u2net")
+                if os.path.exists(cache_u2):
+                    os.environ["U2NET_HOME"] = cache_u2
+                import rembg
+                clean_rgba = rembg.remove(orig)
+            except Exception as e_rem:
+                logging.warning(f"HF Free local rembg notice: {e_rem}")
+                try:
+                    from tsr.utils import remove_background
+                    clean_rgba = remove_background(orig.convert("RGB"))
+                except Exception:
+                    clean_rgba = orig.convert("RGBA")
+
+        if clean_rgba.mode != "RGBA":
+            clean_rgba = clean_rgba.convert("RGBA")
+
+        arr = np.array(clean_rgba)
+        rgb = arr[:, :, :3].copy()
+        alpha = arr[:, :, 3].copy()
+
+        # 1. Repair symmetrical collar & interior rembg holes
+        try:
+            from texture_engine import repair_symmetrical_collar
+            rgb, alpha, _ = repair_symmetrical_collar(rgb, alpha)
+            h_a, w_a = alpha.shape
+            if orig_rgb.shape[:2] == (h_a, w_a):
+                corners = np.concatenate([
+                    orig_rgb[:12, :12].reshape(-1, 3),
+                    orig_rgb[:12, -12:].reshape(-1, 3),
+                    orig_rgb[-12:, :12].reshape(-1, 3),
+                    orig_rgb[-12:, -12:].reshape(-1, 3),
+                ], axis=0).astype(np.float32)
+                if np.mean(np.std(corners, axis=0)) < 10.0:
+                    bg_col = np.median(corners, axis=0)
+                    col_diff = np.linalg.norm(orig_rgb.astype(np.float32) - bg_col[None, None, :], axis=2)
+                    near_fg = ndi.binary_dilation(alpha > 160, iterations=max(6, int(max(h_a, w_a) * 0.015)))
+                    missed_fg = near_fg & (col_diff > 48.0) & (alpha < 180)
+                    if np.any(missed_fg):
+                        rgb[missed_fg] = orig_rgb[missed_fg]
+                        alpha[missed_fg] = 255
+        except Exception as e_rep:
+            logging.warning(f"HF Free collar/feature repair notice: {e_rep}")
+
+        # 2. Strictly zero out faint background alpha noise & remove isolated dust islands
+        fg_binary = alpha > 75
+        if np.any(fg_binary):
+            labeled, num_features = ndi.label(fg_binary)
+            if num_features > 1:
+                counts = np.bincount(labeled.ravel())
+                counts[0] = 0
+                max_area = counts.max()
+                keep_labels = np.where(counts >= max(32, int(max_area * 0.005)))[0]
+                fg_binary = np.isin(labeled, keep_labels)
+            alpha[~fg_binary] = 0
+            alpha[alpha > 210] = 255
+
+        # 3. Tightly crop around the 3D subject with a clean 6% transparent border
+        coords = np.nonzero(alpha > 20)
+        if len(coords[0]) > 0:
+            y_min, y_max = int(coords[0].min()), int(coords[0].max())
+            x_min, x_max = int(coords[1].min()), int(coords[1].max())
+            h_fg, w_fg = max(1, y_max - y_min), max(1, x_max - x_min)
+            pad_y = max(8, int(round(h_fg * 0.06)))
+            pad_x = max(8, int(round(w_fg * 0.06)))
+
+            # Build a fresh canvas with guaranteed 0-alpha transparent border padding
+            new_h = (y_max - y_min + 1) + 2 * pad_y
+            new_w = (x_max - x_min + 1) + 2 * pad_x
+            out_rgba = np.zeros((new_h, new_w, 4), dtype=np.uint8)
+            out_rgba[pad_y:pad_y + (y_max - y_min + 1), pad_x:pad_x + (x_max - x_min + 1), :3] = rgb[y_min:y_max + 1, x_min:x_max + 1]
+            out_rgba[pad_y:pad_y + (y_max - y_min + 1), pad_x:pad_x + (x_max - x_min + 1), 3] = alpha[y_min:y_max + 1, x_min:x_max + 1]
+            clean_pil = Image.fromarray(out_rgba, mode="RGBA")
+        else:
+            clean_pil = Image.fromarray(np.dstack([rgb, alpha]), mode="RGBA")
+
+        clean_pil.save(out_path)
+        final_a = np.array(clean_pil)[:, :, 3]
+        needs_cloud_rembg = bool(np.mean(final_a < 30) < 0.10)
+        return out_path, needs_cloud_rembg
+
     def _execute_space_job(self, c, image_path, back_image_path, left_image_path, right_image_path,
-                           steps, octree_res, progress_cb, start_pct=35, max_wait_sec=75):
+                           steps, octree_res, progress_cb, start_pct=35, max_wait_sec=75, rembg_needed=False):
         from gradio_client import handle_file
 
         # Cap Cloud octree_resolution to 180 so raw white_mesh.glb is ~1.0 MB instead of 4.6 MB
@@ -233,7 +338,7 @@ class HuggingFaceFreeClient:
             "steps": cloud_steps,
             "guidance_scale": 5.0,
             "octree_resolution": cloud_octree,
-            "check_box_rembg": False,
+            "check_box_rembg": bool(rembg_needed),
             "num_chunks": 8000,
             "randomize_seed": True,
             "api_name": "/shape_generation"
@@ -301,10 +406,10 @@ class HuggingFaceFreeClient:
         """
         Executes free 3D generation via Hugging Face Spaces.
         Features dual-strategy resilience:
-        1. Try with user token (if configured).
-        2. If user token exceeds ZeroGPU quota, automatically retry anonymously.
-        3. Supports single-view and multi-view.
-        4. Supports Plaster/Clay sculpture vs Full Meshy-grade PBR texture.
+        1. Always segments & crops input images to 100% transparent RGBA so Cloud generates a real 3D statue (never a picture frame).
+        2. Try with user token (if configured).
+        3. If user token exceeds ZeroGPU quota, automatically retry anonymously.
+        4. Supports single-view and multi-view, plus Clay sculpture vs Full Meshy-grade PBR texture.
         """
         if not os.path.exists(image_path):
             return {"success": False, "error": f"Không tìm thấy ảnh: {image_path}"}
@@ -324,6 +429,22 @@ class HuggingFaceFreeClient:
             created_temp_dir = True
         os.makedirs(item_dir, exist_ok=True)
         raw_glb = os.path.join(item_dir, "raw_model.glb")
+
+        # 1. Guarantee 100% transparent background & tight subject crop before sending to Cloud
+        clean_front_path = os.path.join(item_dir, "input.png")
+        clean_front_path, rembg_needed = self._prepare_clean_rgba_input(image_path, clean_front_path, progress_cb=progress_cb)
+
+        clean_back_path = None
+        if back_image_path and os.path.exists(back_image_path):
+            clean_back_path, _ = self._prepare_clean_rgba_input(back_image_path, os.path.join(item_dir, "input_back.png"))
+
+        clean_left_path = None
+        if left_image_path and os.path.exists(left_image_path):
+            clean_left_path, _ = self._prepare_clean_rgba_input(left_image_path, os.path.join(item_dir, "input_left.png"))
+
+        clean_right_path = None
+        if right_image_path and os.path.exists(right_image_path):
+            clean_right_path, _ = self._prepare_clean_rgba_input(right_image_path, os.path.join(item_dir, "input_right.png"))
 
         job = None
         raw_res = None
@@ -349,8 +470,8 @@ class HuggingFaceFreeClient:
                     progress_cb("⏳ Đang gửi yêu cầu vào hàng đợi Cloud ZeroGPU (0đ Miễn phí)…", 35)
 
                 job = self._execute_space_job(
-                    c, image_path, back_image_path, left_image_path, right_image_path,
-                    steps, octree_res, progress_cb, start_pct=35
+                    c, clean_front_path, clean_back_path, clean_left_path, clean_right_path,
+                    steps, octree_res, progress_cb, start_pct=35, rembg_needed=rembg_needed
                 )
 
                 if progress_cb:
@@ -392,8 +513,8 @@ class HuggingFaceFreeClient:
                             verbose=False
                         )
                         job = self._execute_space_job(
-                            c, image_path, back_image_path, left_image_path, right_image_path,
-                            steps, octree_res, progress_cb, start_pct=35
+                            c, clean_front_path, clean_back_path, clean_left_path, clean_right_path,
+                            steps, octree_res, progress_cb, start_pct=35, rembg_needed=rembg_needed
                         )
                         if progress_cb:
                             progress_cb("📥 Đang tải mô hình 3D nguyên bản từ Hugging Face Cloud…", 78)
@@ -408,16 +529,12 @@ class HuggingFaceFreeClient:
                         )
                     except Exception as e_anon:
                         logging.exception(f"HF Free Anonymous Attempt failed: {e_anon}")
-                        if created_temp_dir and os.path.exists(item_dir) and not os.listdir(item_dir):
-                            shutil.rmtree(item_dir, ignore_errors=True)
                         return {
                             "success": False,
                             "error": f"Hạn mức Cloud Free ZeroGPU tạm hết: {e_anon}",
                             "quota_exceeded": True
                         }
                 else:
-                    if created_temp_dir and os.path.exists(item_dir) and not os.listdir(item_dir):
-                        shutil.rmtree(item_dir, ignore_errors=True)
                     return {
                         "success": False,
                         "error": f"Lỗi Hugging Face Cloud Free: {err_str}",
@@ -427,18 +544,37 @@ class HuggingFaceFreeClient:
             _safe_close_gradio_client(c)
 
         if not dl_ok or not os.path.exists(raw_glb) or os.path.getsize(raw_glb) <= 1024:
-            if created_temp_dir and os.path.exists(item_dir) and not os.listdir(item_dir):
-                shutil.rmtree(item_dir, ignore_errors=True)
             return {
                 "success": False,
                 "error": "Đường truyền tải mô hình từ Hugging Face Cloud quá chậm hoặc bị ngắt."
             }
 
         if progress_cb:
-            progress_cb("⚙️ Đang đọc cấu trúc lưới 3D nguyên bản…", 84)
+            progress_cb("⚙️ Đang đọc & làm sạch cấu trúc lưới 3D nguyên bản…", 84)
 
         import trimesh
+        import numpy as np
         mesh = trimesh.load(raw_glb, force="mesh")
+
+        # 2. Clean disconnected floating fragments & verify true 3D statue geometry (reject flat slabs)
+        try:
+            components = mesh.split(only_watertight=False)
+            if len(components) > 1:
+                mesh = max(components, key=lambda comp: len(comp.vertices))
+            mesh.remove_unreferenced_vertices()
+            mesh.export(os.path.join(item_dir, "raw_hunyuan.glb"))
+        except Exception as e_clean:
+            logging.warning(f"HF Free mesh component cleanup notice: {e_clean}")
+
+        ext = mesh.extents
+        if len(ext) == 3 and max(ext[0], ext[1]) > 0:
+            depth_ratio = float(ext[2]) / float(max(ext[0], ext[1]))
+            if depth_ratio < 0.14:
+                logging.warning(f"HF Free mesh depth_ratio={depth_ratio:.3f} is too flat (slab/frame). Triggering local 3D engine.")
+                return {
+                    "success": False,
+                    "error": "Mô hình Cloud bị dẹt dạng khung ảnh, đang chuyển sang dựng khối 3D đầy đủ."
+                }
 
         from texture_engine import bake_meshy_pbr_mesh
         if color_mode == "clay":
@@ -448,10 +584,10 @@ class HuggingFaceFreeClient:
             if progress_cb:
                 progress_cb("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 88)
         baked_mesh, _ = bake_meshy_pbr_mesh(
-            mesh, image_path,
-            back_image_source=back_image_path,
-            left_image_source=left_image_path,
-            right_image_source=right_image_path,
+            mesh, clean_front_path,
+            back_image_source=clean_back_path,
+            left_image_source=clean_left_path,
+            right_image_source=clean_right_path,
             color_mode=color_mode
         )
 

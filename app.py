@@ -40,7 +40,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.1.4"
+APP_VERSION = "v2.1.5"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1225,8 +1225,33 @@ class AppApi:
     # ── ENGINE 4: HUGGING FACE FREE CLOUD (0 VNĐ API) ────────────────────────
     def _gen_hf_free_cloud(self, file_path, num_steps=15, octree_res=256, target_dir=None, task_id=None,
                            back_image=None, left_image=None, right_image=None, color_mode="color"):
-        self._progress("🌐 Đang kết nối tới Hugging Face Cloud Free (0đ API)…", 10, task_id=task_id)
+        self._progress("🌐 Đang chuẩn bị ảnh & kết nối tới Hugging Face Cloud Free (0đ API)…", 10, task_id=task_id)
         try:
+            image = self._preprocess_hunyuan(file_path, task_id=task_id)
+            if target_dir:
+                item_dir = target_dir
+            else:
+                ts = int(time.time())
+                item_dir = os.path.join(OUTPUT_DIR, f"hf_{ts}")
+            os.makedirs(item_dir, exist_ok=True)
+            input_png_path = os.path.join(item_dir, "input.png")
+            image.save(input_png_path)
+
+            clean_back = None
+            if back_image and os.path.exists(back_image):
+                clean_back = os.path.join(item_dir, "input_back.png")
+                self._preprocess_hunyuan(back_image, task_id=task_id).save(clean_back)
+
+            clean_left = None
+            if left_image and os.path.exists(left_image):
+                clean_left = os.path.join(item_dir, "input_left.png")
+                self._preprocess_hunyuan(left_image, task_id=task_id).save(clean_left)
+
+            clean_right = None
+            if right_image and os.path.exists(right_image):
+                clean_right = os.path.join(item_dir, "input_right.png")
+                self._preprocess_hunyuan(right_image, task_id=task_id).save(clean_right)
+
             from hf_free_client import HuggingFaceFreeClient
             token = self.config.get("hf_token", "")
             client = HuggingFaceFreeClient(token)
@@ -1235,14 +1260,14 @@ class AppApi:
                 self._progress(msg, pct, task_id=task_id)
 
             res = client.generate_3d_free(
-                file_path,
+                input_png_path,
                 progress_cb=_step_cb,
-                item_dir=target_dir,
+                item_dir=item_dir,
                 steps=int(num_steps),
                 octree_res=int(octree_res),
-                back_image_path=back_image,
-                left_image_path=left_image,
-                right_image_path=right_image,
+                back_image_path=clean_back,
+                left_image_path=clean_left,
+                right_image_path=clean_right,
                 color_mode=color_mode
             )
 
@@ -1259,7 +1284,7 @@ class AppApi:
                     fb_octree = min(int(octree_res), 192)
                     return self._gen_hunyuan3d_turbo(
                         file_path, num_steps=fb_steps, octree_res=fb_octree,
-                        target_dir=target_dir, task_id=task_id,
+                        target_dir=item_dir, task_id=task_id,
                         back_image=back_image, left_image=left_image, right_image=right_image,
                         color_mode=color_mode
                     )
@@ -1271,7 +1296,7 @@ class AppApi:
                     )
                     return self._gen_local(
                         file_path, quality="pbr_1024", smooth=True,
-                        target_dir=target_dir, task_id=task_id,
+                        target_dir=item_dir, task_id=task_id,
                         back_image=back_image, color_mode=color_mode
                     )
 
@@ -1290,7 +1315,7 @@ class AppApi:
                 name=os.path.splitext(os.path.basename(file_path))[0],
                 engine=engine_name,
                 source="image",
-                input_img_path=file_path
+                input_img_path=input_png_path
             )
 
             self._progress("✅ Hoàn tất! Mô hình 3D từ Cloud Free sẵn sàng (100%).", 100, task_id=task_id)

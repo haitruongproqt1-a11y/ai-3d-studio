@@ -279,29 +279,50 @@ def clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, target_w, targ
 def synthesize_clean_back_view(front_padded, geom_mask_f):
     """
     Synthesizes a clean, realistic back view from the front view when no back photo is provided.
+    Supports both standard standing portraits and T-pose/A-pose humanoid characters.
     """
     H, W = front_padded.shape[:2]
     back_padded = cv2.flip(front_padded, 1)
     mask_b = cv2.flip(geom_mask_f.astype(np.uint8), 1) > 0
 
-    if not _is_humanoid_portrait(back_padded, mask_b):
+    coords = np.nonzero(mask_b)
+    if len(coords[0]) < 100:
+        return back_padded, mask_b
+    y0, y1 = int(coords[0].min()), int(coords[0].max())
+    x0, x1 = int(coords[1].min()), int(coords[1].max())
+    h_fg = float(max(1, y1 - y0))
+    w_fg = float(max(1, x1 - x0))
+
+    is_standing = _is_humanoid_portrait(back_padded, mask_b)
+    is_tpose = False
+    if not is_standing and (h_fg / w_fg) >= 0.75:
+        y_hd = int(y0 + 0.065 * h_fg)
+        y_wst = int(y0 + 0.480 * h_fg)
+        xs_hd = np.nonzero(mask_b[y_hd])[0] if 0 <= y_hd < H else []
+        xs_wst = np.nonzero(mask_b[y_wst])[0] if 0 <= y_wst < H else []
+        w_hd = float(xs_hd[-1] - xs_hd[0]) if len(xs_hd) >= 2 else w_fg
+        w_wst = float(xs_wst[-1] - xs_wst[0]) if len(xs_wst) >= 2 else w_fg
+        if w_hd < 0.35 * h_fg and w_wst < 0.48 * h_fg:
+            y_c0, y_c1 = int(y0 + 0.045 * h_fg), int(y0 + 0.125 * h_fg)
+            ck_pix = back_padded[y_c0:y_c1, :][mask_b[y_c0:y_c1, :]]
+            if len(ck_pix) > 0:
+                sk_cand = ck_pix[(ck_pix[:, 0] > ck_pix[:, 1]) & (ck_pix[:, 0] > 85)]
+                is_tpose = len(sk_cand) >= 0.12 * len(ck_pix)
+
+    if not (is_standing or is_tpose):
         return back_padded, mask_b
 
-    coords = np.nonzero(mask_b)
-    y0, y1 = int(coords[0].min()), int(coords[0].max())
-    h_fg = float(max(1, y1 - y0))
-
-    y_cheek0, y_cheek1 = int(y0 + 0.055 * h_fg), int(y0 + 0.110 * h_fg)
+    y_cheek0, y_cheek1 = int(y0 + 0.055 * h_fg), int(y0 + 0.115 * h_fg)
     cheek_pixels = back_padded[y_cheek0:y_cheek1, :][mask_b[y_cheek0:y_cheek1, :]]
     skin_candidates = cheek_pixels[(cheek_pixels[:, 0] > cheek_pixels[:, 1]) & (cheek_pixels[:, 0] > 85)]
     skin_color = np.median(skin_candidates, axis=0) if len(skin_candidates) > 0 else np.array([195, 155, 140])
 
-    # 1. Back of head & nape of neck [y0 + 0.015*h_fg .. y0 + 0.130*h_fg]
-    y_crown0, y_crown1 = int(y0 + 0.005 * h_fg), int(y0 + 0.035 * h_fg)
+    # 1. Back of head/helmet & nape of neck [y0 + 0.015*h_fg .. y0 + 0.132*h_fg]
+    y_crown0, y_crown1 = int(y0 + 0.005 * h_fg), int(y0 + 0.040 * h_fg)
     crown_pixels = back_padded[y_crown0:y_crown1, :][mask_b[y_crown0:y_crown1, :]]
-    hair_color = np.percentile(crown_pixels, 20, axis=0) if len(crown_pixels) > 0 else np.array([25, 25, 28])
+    hair_color = np.percentile(crown_pixels, 25, axis=0) if len(crown_pixels) > 0 else np.array([25, 25, 28])
 
-    y_face0, y_neck1 = int(y0 + 0.015 * h_fg), int(y0 + 0.130 * h_fg)
+    y_face0, y_neck1 = int(y0 + 0.015 * h_fg), int(y0 + 0.132 * h_fg)
     head_overlay = back_padded.copy().astype(np.float32)
     for y in range(y_face0, y_neck1):
         xs = np.nonzero(mask_b[y])[0]
@@ -309,7 +330,7 @@ def synthesize_clean_back_view(front_padded, geom_mask_f):
         w_row = max(10.0, float(xr - xl))
         x_norm = (np.arange(W) - (xl + xr) / 2.0) / (w_row * 0.5)
         shade = 1.02 - 0.15 * np.clip(x_norm ** 2, 0.0, 1.2)
-        t_neck = np.clip((y - (y0 + 0.065 * h_fg)) / (0.022 * h_fg), 0.0, 1.0)
+        t_neck = np.clip((y - (y0 + 0.070 * h_fg)) / (0.024 * h_fg), 0.0, 1.0)
         base_c = (1.0 - t_neck) * hair_color + t_neck * skin_color
         head_overlay[y, :] = np.clip(base_c[None, :] * shade[:, None], 0, 255)
 
@@ -320,6 +341,10 @@ def synthesize_clean_back_view(front_padded, geom_mask_f):
     back_padded = (head_alpha * head_overlay + (1.0 - head_alpha) * back_padded).astype(np.uint8)
 
     # 2. Back of collar & jacket torso [y0 + 0.122*h_fg .. y0 + 0.510*h_fg]
+    y_wst_ref = int(y0 + 0.46 * h_fg)
+    xs_wst_ref = np.nonzero(mask_b[y_wst_ref])[0] if 0 <= y_wst_ref < H else []
+    max_torso_w = float(xs_wst_ref[-1] - xs_wst_ref[0]) * 1.25 if (is_tpose and len(xs_wst_ref) >= 2) else float(W)
+
     y_tor0, y_tor1 = int(y0 + 0.122 * h_fg), int(y0 + 0.510 * h_fg)
     y_s0, y_s1 = int(y0 + 0.22 * h_fg), int(y0 + 0.29 * h_fg)
     tor_sample = back_padded[y_s0:y_s1, :][mask_b[y_s0:y_s1, :]]
@@ -333,14 +358,15 @@ def synthesize_clean_back_view(front_padded, geom_mask_f):
         y = y_tor0 + ry
         xs = np.nonzero(mask_b[y])[0]
         xl, xr = (xs[0], xs[-1]) if len(xs) >= 2 else (int(W * 0.15), int(W * 0.85))
-        w_row = max(20.0, float(xr - xl))
         xm = (xl + xr) / 2.0
+        w_row = min(max_torso_w, max(20.0, float(xr - xl)))
         x_norm = (np.arange(W) - xm) / (w_row * 0.5)
         cyl_shade = 1.04 - 0.16 * np.clip(x_norm ** 2, 0.0, 1.3) - 0.05 * np.exp(-((np.arange(W) - xm) / max(3.0, w_row * 0.015)) ** 2)
         coat_synth[ry, :] = np.clip(garment_color[None, :] * cyl_shade[:, None], 0, 255)
 
         if y < y0 + 0.168 * h_fg:
-            blend_mask[ry, :] = 1.0
+            c_l, c_r = int(xm - 0.50 * w_row), int(xm + 0.50 * w_row)
+            blend_mask[ry, max(0, c_l):min(W, c_r)] = 1.0
         elif y < y0 + 0.185 * h_fg:
             c_l, c_r = int(xm - 0.34 * w_row), int(xm + 0.34 * w_row)
             blend_mask[ry, max(0, c_l):min(W, c_r)] = 1.0
@@ -351,7 +377,8 @@ def synthesize_clean_back_view(front_padded, geom_mask_f):
             c_l, c_r = int(xm - 0.38 * w_row), int(xm + 0.38 * w_row)
             blend_mask[ry, max(0, c_l):min(W, c_r)] = 1.0
             c_dist = np.linalg.norm(tor_region[ry] - garment_color[None, :], axis=1)
-            blend_mask[ry, c_dist > 18.0] = 1.0
+            in_torso = (np.arange(W) > (xm - 0.48 * w_row)) & (np.arange(W) < (xm + 0.48 * w_row))
+            blend_mask[ry, in_torso & (c_dist > 18.0)] = 1.0
 
     k_tor = max(3, int(round(h_fg * 0.022)) | 1)
     blend_mask = cv2.GaussianBlur(blend_mask, (k_tor, k_tor), 0)[:, :, None]
