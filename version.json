@@ -1,13 +1,12 @@
 {
-  "version": "2.1.8",
+  "version": "2.1.9",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Nâng Cấp Meshy AI 7.1 Ultra 4K (Mới Nhất Tháng 9/2026): Chuyển sang mô hình AI Meshy 7.1 với geometry_resolution='4k', should_remesh=true, should_texture=true — chất lượng mô hình đỉnh cao nhất hiện tại của Meshy, 556.056 tam giác / 278.012 đỉnh chuẩn chi tiết cao.",
-    "Hiệu Chỉnh Khung Hình 3D Tỷ Lệ Chuẩn Ảnh Gốc (v2.1.7): Loại bỏ hoàn toàn độ bành ngang ~15%.",
-    "Ultra 4K Topology (556K faces) + Multi-Scale 3D Relief v6.0 (v2.1.7): Điêu khắc nổi sâu 3x, cúc áo / huy chương / phù hiệu nổi khối 3D.",
-    "Nướng Vân PBR 8K Ultra-HD (v2.1.6): Duy trì chuẩn 8K và lọc bất đẳng hướng 16x."
+    "Bề Mặt Mịn Hoàn Toàn — Loại Bỏ Xù Xì (Smooth Surface v2.1.9): Áp dụng 8+6+8 vòng Taubin trước subdivide, sau subdivide và sau điêu khắc. Loại bỏ dải vi mô (g_micro) và TopHat gây noise. Làm mịn bản đồ relief bằng Gaussian σ=1.5 trước khi áp lên mesh — bề mặt mịn như Meshy Clay.",
+    "Meshy 7.1 Ultra 4K (v2.1.8): Tích hợp Meshy 7.1 với geometry_resolution=4k, should_remesh, should_texture.",
+    "Frame Aspect Calibration + 556K Topology + 8K PBR (v2.1.7): Hiệu chỉnh khung hình, 556K faces, 8K texture."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.8/update_v2.1.8.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.8/update_v2.1.8.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.8/update_v2.1.8.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip"
 }
