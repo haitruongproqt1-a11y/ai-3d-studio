@@ -440,22 +440,20 @@ class HuggingFaceFreeClient:
         import trimesh
         mesh = trimesh.load(raw_glb, force="mesh")
 
+        from texture_engine import bake_meshy_pbr_mesh
         if color_mode == "clay":
             if progress_cb:
-                progress_cb("🏛️ Đang tạo Tượng Thạch Cao Clay đơn sắc mịn màng…", 88)
-            from texture_engine import create_clay_sculpture_mesh
-            baked_mesh = create_clay_sculpture_mesh(mesh)
+                progress_cb("🏛️ Đang điêu khắc Tượng Thạch Cao Clay High-Poly (Chạm nổi chi tiết 3D)…", 88)
         else:
             if progress_cb:
-                progress_cb("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Tỷ lệ 1:1)…", 88)
-            from texture_engine import bake_meshy_pbr_mesh
-            baked_mesh, _ = bake_meshy_pbr_mesh(
-                mesh, image_path,
-                back_image_source=back_image_path,
-                left_image_source=left_image_path,
-                right_image_source=right_image_path,
-                color_mode=color_mode
-            )
+                progress_cb("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 88)
+        baked_mesh, _ = bake_meshy_pbr_mesh(
+            mesh, image_path,
+            back_image_source=back_image_path,
+            left_image_source=left_image_path,
+            right_image_source=right_image_path,
+            color_mode=color_mode
+        )
 
         if progress_cb:
             progress_cb("💾 Đang xuất tệp mô hình GLB sắc nét…", 95)

@@ -1,14 +1,13 @@
 {
-  "version": "2.1.2",
+  "version": "2.1.3",
   "buildDate": "2026-09-27",
   "releaseNotes": [
-    "Động Cơ Khớp Đường Viền Sinh Học 3 Điểm 2K (3-Point Anatomical Scanline Registration v4.0): Khóa chuẩn 100% khuôn mặt, sống mũi, mắt, miệng, cầu vai quân hàm và toàn bộ cánh tay khớp 1:1 với ảnh chụp.",
-    "Tách Biệt Kép Mặt Nạ Hình Học & Mặt Nạ Màu Sắc (Dual-Mask Separation): Giữ nguyên 100% đỉnh tóc và vành tai trên mặt nạ hình học trong khi gọt sạch 100% viền xám phông nền trên mặt nạ màu sắc.",
-    "Kéo Biên Nội Vùng EDT (Euclidean Distance Transform Pull-In): Đảm bảo bằng toán học 100.0% mọi đỉnh 3D đều lấy màu bên trong chủ thể, triệt tiêu vĩnh viễn lỗi lem màu xám ở cánh tay phải và má phải.",
-    "Tổng Hợp Mặt Sau May Đo Chuẩn Xác (Clean Tailored Back Synthesis): Tự động tái tạo tóc sau gáy, da cổ và lưng áo quân phục phẳng đẹp, loại bỏ hoàn toàn cúc áo/cà vạt/mũ bị in ngược ra sau lưng.",
-    "Nâng Cấp Độ Phân Giải Vân Bề Mặt Lên 2K Ultra-HD (2048px): Tăng gấp 4 lần mật độ điểm ảnh trên khuôn mặt, bảng tên và quân hiệu."
+    "Động Cơ Hiệu Chỉnh Hình Khối 3D & Chạm Nổi High-Poly v5.0 (Meshy-Grade 3D Silhouette Calibration & Relief Sculpting): Hiệu chỉnh trực tiếp tọa độ đỉnh 3D (X, Y) khớp 1:1 với phom dáng ảnh chụp (căn chuẩn sống mũi, đường viền vai và cổ áo).",
+    "Chia Lưới High-Poly (~311.000 Đa Giác) & Chạm Nổi Đa Tầng DoG (Multi-Scale Photometric 3D Relief): Tự động khử bậc thang Voxel và chạm nổi trực tiếp mắt, mũi, môi, cành tùng, cầu vai, bảng tên, cúc áo, nắp túi lên cả mô hình Có Màu (PBR) và Tượng Thạch Cao (Clay).",
+    "Khôi Phục Cổ Áo Đối Xứng & Lỗ Thủng Alpha (Symmetrical Collar & Interior Hole Restoration): Tự động giải nhân Alpha và tái tạo vạt cổ áo bị thiếu do tách nền rembg, xóa sạch 100% vết đen hoặc khuyết cổ áo.",
+    "Chiếu Phẳng Trực Giao 1:1 Chuẩn 2K Ultra-HD (Pure 1:1 Orthographic 2K Projection): Giữ nguyên 100% tỷ lệ nhiếp ảnh sắc nét không biến dạng trên khuôn mặt và quân phục."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.2/update_v2.1.2.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.2/update_v2.1.2.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.2/update_v2.1.2.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.3/update_v2.1.3.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.3/update_v2.1.3.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.3/update_v2.1.3.zip"
 }

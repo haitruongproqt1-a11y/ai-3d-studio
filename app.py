@@ -34,12 +34,13 @@ from tsr.utils import remove_background, resize_foreground
 import trimesh
 import cv2
 import rembg
+import scipy.ndimage as ndi
 from meshy_client import MeshyClient
 from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.1.2"
+APP_VERSION = "v2.1.3"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -728,6 +729,7 @@ class AppApi:
     def _preprocess_hunyuan(self, file_path: str, task_id=None) -> Image.Image:
         self._progress("🤖 AI đang phân đoạn & tách sạch nền trong suốt 100%…", 10, task_id=task_id)
         orig = Image.open(file_path)
+        orig_rgb = np.array(orig.convert("RGB"))
         clean_rgba = None
         if orig.mode == "RGBA":
             arr_check = np.array(orig)[:, :, 3]
@@ -744,9 +746,34 @@ class AppApi:
         if clean_rgba.mode != "RGBA":
             clean_rgba = clean_rgba.convert("RGBA")
 
-        # Crop to subject bounds with 5% padding so Hunyuan3D centers perfectly on the subject
+        # Repair interior low-alpha holes & symmetrical collar cutouts before 3D shape generation
         arr = np.array(clean_rgba)
         if arr.shape[2] == 4:
+            try:
+                from texture_engine import repair_symmetrical_collar
+                rgb_rep, alpha_rep, _ = repair_symmetrical_collar(arr[:, :, :3], arr[:, :, 3])
+                # Also recover thin high-contrast object legs/features on uniform studio backgrounds
+                h_a, w_a = alpha_rep.shape
+                if orig_rgb.shape[:2] == (h_a, w_a):
+                    corners = np.concatenate([
+                        orig_rgb[:12, :12].reshape(-1, 3),
+                        orig_rgb[:12, -12:].reshape(-1, 3),
+                        orig_rgb[-12:, :12].reshape(-1, 3),
+                        orig_rgb[-12:, -12:].reshape(-1, 3),
+                    ], axis=0).astype(np.float32)
+                    if np.mean(np.std(corners, axis=0)) < 10.0:
+                        bg_col = np.median(corners, axis=0)
+                        col_diff = np.linalg.norm(orig_rgb.astype(np.float32) - bg_col[None, None, :], axis=2)
+                        near_fg = ndi.binary_dilation(alpha_rep > 160, iterations=max(6, int(max(h_a, w_a) * 0.015)))
+                        missed_fg = near_fg & (col_diff > 48.0) & (alpha_rep < 180)
+                        if np.any(missed_fg):
+                            rgb_rep[missed_fg] = orig_rgb[missed_fg]
+                            alpha_rep[missed_fg] = 255
+                arr = np.dstack([rgb_rep, alpha_rep])
+                clean_rgba = Image.fromarray(arr, mode="RGBA")
+            except Exception as e_rep:
+                logging.warning(f"Preprocess collar/feature repair notice: {e_rep}")
+
             alpha = arr[:, :, 3]
             coords = np.nonzero(alpha > 15)
             if len(coords[0]) > 0:
@@ -919,16 +946,21 @@ class AppApi:
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
 
-            # ── CLAY SCULPTURE OR MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
+            # ── CLAY SCULPTURE OR MESHY-GRADE 3D RELIEF & PBR TEXTURE ENGINE ──
             if color_mode == "clay":
-                self._progress("🏛️ Đang hoàn thiện Tượng Thạch Cao Clay đơn sắc mịn màng…", 65, task_id=task_id)
+                self._progress("🏛️ Đang điêu khắc Tượng Thạch Cao Clay High-Poly (Chạm nổi chi tiết 3D)…", 65, task_id=task_id)
                 try:
-                    from texture_engine import create_clay_sculpture_mesh
-                    meshes = [create_clay_sculpture_mesh(meshes[0])]
+                    from texture_engine import bake_meshy_pbr_mesh
+                    baked_mesh, _ = bake_meshy_pbr_mesh(
+                        meshes[0], image,
+                        back_image_source=back_image,
+                        color_mode="clay"
+                    )
+                    meshes = [baked_mesh]
                 except Exception as e_cl:
                     logging.warning(f"Clay sculpture error: {e_cl}")
             elif do_bake:
-                self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Chất lượng Meshy)…", 65, task_id=task_id)
+                self._progress("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 65, task_id=task_id)
                 try:
                     from texture_engine import bake_meshy_pbr_mesh
                     baked_mesh, _ = bake_meshy_pbr_mesh(
@@ -1052,30 +1084,26 @@ class AppApi:
                 if len(components) > 1:
                     mesh = max(components, key=lambda c: len(c.vertices))
                 mesh.remove_unreferenced_vertices()
+                mesh.export(os.path.join(item_dir, "raw_hunyuan.glb"))
             except Exception:
                 pass
 
-            # ── CLAY SCULPTURE OR MESHY-GRADE DUAL-VIEW PBR TEXTURE ENGINE ──
+            # ── CLAY SCULPTURE OR MESHY-GRADE 3D RELIEF & PBR TEXTURE ENGINE ──
             if color_mode == "clay":
-                self._progress("🏛️ Đang tạo Tượng Thạch Cao Clay đơn sắc mịn màng…", 85, task_id=task_id)
-                try:
-                    from texture_engine import create_clay_sculpture_mesh
-                    mesh = create_clay_sculpture_mesh(mesh)
-                except Exception as e_clay:
-                    logging.exception(f"Clay sculpture error: {e_clay}")
+                self._progress("🏛️ Đang điêu khắc Tượng Thạch Cao Clay High-Poly (Chạm nổi chi tiết 3D)…", 85, task_id=task_id)
             else:
-                self._progress("🎨 AI đang nướng bản đồ vân PBR Dual-View HD (Tỷ lệ 1:1)…", 85, task_id=task_id)
-                try:
-                    from texture_engine import bake_meshy_pbr_mesh
-                    mesh, _ = bake_meshy_pbr_mesh(
-                        mesh, image,
-                        back_image_source=back_image,
-                        left_image_source=left_image,
-                        right_image_source=right_image,
-                        color_mode=color_mode
-                    )
-                except Exception as e_col:
-                    logging.exception(f"Meshy PBR Texture Engine error: {e_col}")
+                self._progress("🎨 AI đang hiệu chỉnh 3D Relief & nướng vân PBR 2K (Tỷ lệ 1:1 chuẩn Meshy)…", 85, task_id=task_id)
+            try:
+                from texture_engine import bake_meshy_pbr_mesh
+                mesh, _ = bake_meshy_pbr_mesh(
+                    mesh, image,
+                    back_image_source=back_image,
+                    left_image_source=left_image,
+                    right_image_source=right_image,
+                    color_mode=color_mode
+                )
+            except Exception as e_col:
+                logging.exception(f"Meshy PBR/Relief Texture Engine error: {e_col}")
 
             self._progress("💾 Đang xuất tệp mô hình GLB sắc nét (95%)…", 95, task_id=task_id)
             glb_path = os.path.join(item_dir, "model.glb")
@@ -1725,7 +1753,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.1.1</span>
+    <span class="ver" id="ver">v2.1.3</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
