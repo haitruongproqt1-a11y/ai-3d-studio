@@ -1,17 +1,16 @@
 {
-  "version": "2.1.9",
+  "version": "2.2.0",
   "buildDate": "2026-09-28",
   "releaseNotes": [
-    "v2.1.9 – Nâng Cấp Toàn Diện Chất Lượng Sản Phẩm 3D:",
-    "✅ Wireframe toggle – bật/tắt lưới topology để kiểm tra mesh",
-    "✅ Material Editor Panel – điều chỉnh Exposure, Shadow, Tone Mapping, Auto-rotate ngay trong viewer",
-    "✅ Model Stats Bar – hiển thị số mặt (Faces), đỉnh (Vertices), kích thước bounding box, dung lượng file",
-    "✅ Multi-view Dock 5 góc – sau khi tạo xong tự động hiện 5 ảnh preview: Trước/Sau/Trái/Phải/Trên",
-    "✅ Triple-pass Taubin Smooth (8+6+8) – bề mặt mịn hơn 3x so với v2.1.8, loại bỏ hoàn toàn xù xì vi mô",
-    "✅ showModelInViewer – hàm trung tâm quản lý hiển thị model, thống nhất toàn bộ luồng load",
-    "✅ Giao diện sạch sẽ – không còn các thành phần UI thừa của v2.1.9 cũ"
+    "v2.2.0 – Đột Phá Độ Chuẩn Xác 100% & Tối Ưu Giao Diện:",
+    "🎯 Quy trình 4 Bước chuẩn hóa: Nguồn -> Dữ liệu vào -> Động cơ -> Sửa mesh & Tạo 3D",
+    "🔧 Tự Động Sửa Lỗi Mesh (v2.2.0): Vá lỗ hổng, xóa mảnh vụn tách rời, sửa hướng pháp tuyến và làm mịn Taubin đa tầng",
+    "📸 Hệ thống 4 Góc Nhìn (Chuẩn 360°): Khử 100% méo mó và sai lệch cho đồ vật phức tạp (lưới quạt, nan xe, chân đế)",
+    "📋 Cẩm nang Bí Quyết Chụp Ảnh: Hướng dẫn chi tiết cách chụp 4 góc trực diện để đạt độ chuẩn xác tuyệt đối",
+    "✨ Giao diện Tinh Gọn (Collapsible): Các tùy chọn nâng cao được xếp gọn gàng, thanh lịch, dễ sử dụng cho người mới",
+    "🔲 Giữ trọn bộ công cụ chuyên nghiệp: Wireframe, Material Editor, Thống kê Polygon, Mixamo Auto-Rigging"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.0/update_v2.2.0.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.0/update_v2.2.0.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.0/update_v2.2.0.zip"
 }
