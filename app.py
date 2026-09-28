@@ -40,7 +40,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.2.0"
+APP_VERSION = "v2.2.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -627,6 +627,67 @@ class AppApi:
             except Exception as e:
                 return {"slot": slot, "error": str(e)}
         return None
+
+    # ── v2.2.1: Auto slice 2x2 multi-view collage image ───────────────────────
+    def split_and_load_grid_image(self):
+        """Allows user to select a 2x2 grid image and automatically slices it into 4 slots: front, back, right, left."""
+        if not self._window:
+            return None
+        types = ("Image Files (*.png;*.jpg;*.jpeg;*.webp)", "All Files (*.*)")
+        result = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
+        if not result:
+            return None
+        fp = result[0]
+        try:
+            img = Image.open(fp).convert("RGB")
+            w, h = img.size
+            mid_x, mid_y = w // 2, h // 2
+
+            def _clean_header_if_text(im):
+                arr = np.array(im)
+                ih, iw, _ = arr.shape
+                header_h = int(ih * 0.13)
+                corner_bg = np.median(arr[:10, :10, :], axis=(0, 1))
+                if (corner_bg > 225).all():
+                    dark_pixels = (arr[:header_h, :, :] < 130).any(axis=2)
+                    if dark_pixels.sum() > 40:
+                        arr[:header_h, :, :] = 255
+                        return Image.fromarray(arr)
+                elif (corner_bg < 35).all():
+                    light_pixels = (arr[:header_h, :, :] > 175).any(axis=2)
+                    if light_pixels.sum() > 40:
+                        arr[:header_h, :, :] = 0
+                        return Image.fromarray(arr)
+                return im
+
+            # 4 quadrants with 2px margin from center line
+            raw_slices = {
+                "front": img.crop((0, 0, max(1, mid_x - 2), max(1, mid_y - 2))),
+                "back": img.crop((min(w - 1, mid_x + 2), 0, w, max(1, mid_y - 2))),
+                "right": img.crop((0, min(h - 1, mid_y + 2), max(1, mid_x - 2), h)),
+                "left": img.crop((min(w - 1, mid_x + 2), min(h - 1, mid_y + 2), w, h)),
+            }
+
+            temp_dir = os.path.join(OUTPUT_DIR, "_grid_split")
+            os.makedirs(temp_dir, exist_ok=True)
+
+            out = {}
+            for slot, simg in raw_slices.items():
+                cleaned = _clean_header_if_text(simg)
+                sp = os.path.join(temp_dir, f"{slot}.png")
+                cleaned.save(sp)
+                with open(sp, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                out[slot] = {
+                    "path": sp,
+                    "dataUrl": f"data:image/png;base64,{b64}",
+                    "name": f"{slot}.png"
+                }
+
+            return {"success": True, "slots": out, "source_path": fp}
+        except Exception as e:
+            logging.exception("split_and_load_grid_image error")
+            return {"success": False, "error": str(e)}
 
     # ── v2.2.0 Part B: Mesh Repair & Post-processing Pipeline ────────────────
     def _post_process_mesh(self, mesh, smooth_level="medium", task_id=None):
@@ -2009,6 +2070,10 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 .slot-loaded.show{display:inline}
 .slot-tip-btn{background:none;border:1px solid #1e2638;color:#64748b;font-size:9px;padding:1px 5px;border-radius:4px;cursor:pointer;transition:.15s}
 .slot-tip-btn:hover{color:#38bdf8;border-color:#38bdf8}
+
+/* ── v2.2.1: Grid Slicing Button ── */
+.btn-grid-split{width:100%;background:linear-gradient(135deg,#1e1b4b,#312e81);border:1px solid #6366f1;color:#c7d2fe;padding:8px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:.18s;margin-bottom:8px;box-shadow:0 2px 8px rgba(99,102,241,.25)}
+.btn-grid-split:hover{background:linear-gradient(135deg,#312e81,#4338ca);border-color:#818cf8;color:#fff;transform:translateY(-1px);box-shadow:0 4px 12px rgba(99,102,241,.4)}
 </style>
 </head>
 <body>
@@ -2067,7 +2132,8 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <!-- View mode switcher: Single vs Multi-view -->
       <div class="view-mode-bar">
         <button class="view-tab active" id="vTabSingle" onclick="switchViewMode('single')">1️⃣ Ảnh Đơn</button>
-        <button class="view-tab" id="vTabMulti" onclick="switchViewMode('multi')">📸 4 Góc Nhìn (Chuẩn 360°)</button>
+        <button class="view-tab" id="vTabMulti" onclick="switchViewMode('multi')">📸 4 Góc Nhìn</button>
+        <button class="slot-tip-btn" onclick="autoSplitGridImage()" title="Nạp 1 bức ảnh ghép 4 góc (2x2) để phần mềm tự động cắt và điền vào 4 ô" style="color:#a5b4fc;border-color:#6366f1;font-weight:700">🧩 Cắt 4 Ô</button>
         <button class="slot-tip-btn" onclick="openPhotoGuide()" title="Xem bí quyết chụp ảnh để đạt độ hoàn hảo 100%" style="margin-left:auto;padding:3px 7px;border-radius:5px;font-size:10px">📋 Bí quyết</button>
       </div>
 
@@ -2077,11 +2143,17 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <div class="drop-hint" id="dropHint">
           <b>Chọn ảnh 2D từ máy tính</b>
           <p>Nhấn để nạp ảnh PNG / JPG / WebP</p>
+          <div style="margin-top:6px">
+            <span style="font-size:10.5px;color:#818cf8;text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();autoSplitGridImage()">Hoặc nạp ảnh ghép 4 góc (2x2) ➔</span>
+          </div>
         </div>
       </div>
 
       <!-- Multi view slots container -->
       <div id="multiViewBox" style="display:none" class="mv-container">
+        <button class="btn-grid-split" onclick="autoSplitGridImage()" title="Nạp 1 bức ảnh ghép 2x2 để phần mềm tự động cắt thành 4 góc Trước/Sau/Trái/Phải">
+          🧩 Nạp Ảnh Ghép 4 Góc (Tự Động Cắt & Điền Vào 4 Ô)
+        </button>
         <div class="mv-grid">
           <div class="mv-slot" onclick="pickMultiSlot('front')" id="slotBoxFront">
             <div class="mv-slot-status">
@@ -3004,6 +3076,43 @@ function toggleAdv(id) {
   if (el) {
     const isOpen = el.classList.toggle('open');
     if (tog) tog.classList.toggle('open', isOpen);
+  }
+}
+
+/* ── v2.2.1: Auto slice 4-view grid image ── */
+async function autoSplitGridImage() {
+  window._setProgress('Đang mở hộp thoại chọn ảnh ghép 4 ô (2x2)…', -1);
+  const r = await window.pywebview.api.split_and_load_grid_image();
+  if (r && r.success && r.slots) {
+    switchViewMode('multi');
+    for (const [slot, data] of Object.entries(r.slots)) {
+      multiImgs[slot] = data.path;
+      if (slot === 'front') {
+        imgPath = data.path;
+        const prevSingle = document.getElementById('prev');
+        const dropHint = document.getElementById('dropHint');
+        if (prevSingle) {
+          prevSingle.src = data.dataUrl;
+          prevSingle.style.display = 'block';
+        }
+        if (dropHint) dropHint.style.display = 'none';
+      }
+      const cap = slot.charAt(0).toUpperCase() + slot.slice(1);
+      const p = document.getElementById('mvPrev' + cap);
+      const h = document.getElementById('mvHint' + cap);
+      const lblLoaded = document.getElementById('loaded' + cap);
+      if (p) {
+        p.src = data.dataUrl;
+        p.style.display = 'block';
+      }
+      if (h) h.style.display = 'none';
+      if (lblLoaded) lblLoaded.classList.add('show');
+    }
+    window._setProgress('✅ Đã tự động cắt sạch và nạp đủ 4 góc (Trước, Sau, Trái, Phải)! Sẵn sàng tạo 3D.', 100);
+  } else if (r && r.error) {
+    window._setProgress('❌ Lỗi cắt ảnh: ' + r.error, -1);
+  } else {
+    window._setProgress('Chưa chọn ảnh ghép.', -1);
   }
 }
 
