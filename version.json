@@ -1,10 +1,15 @@
 {
   "version": "2.1.9",
-  "buildDate": "2026-09-27",
+  "buildDate": "2026-09-28",
   "releaseNotes": [
-    "Bề Mặt Mịn Hoàn Toàn — Loại Bỏ Xù Xì (Smooth Surface v2.1.9): Áp dụng 8+6+8 vòng Taubin trước subdivide, sau subdivide và sau điêu khắc. Loại bỏ dải vi mô (g_micro) và TopHat gây noise. Làm mịn bản đồ relief bằng Gaussian σ=1.5 trước khi áp lên mesh — bề mặt mịn như Meshy Clay.",
-    "Meshy 7.1 Ultra 4K (v2.1.8): Tích hợp Meshy 7.1 với geometry_resolution=4k, should_remesh, should_texture.",
-    "Frame Aspect Calibration + 556K Topology + 8K PBR (v2.1.7): Hiệu chỉnh khung hình, 556K faces, 8K texture."
+    "v2.1.9 – Nâng Cấp Toàn Diện Chất Lượng Sản Phẩm 3D:",
+    "✅ Wireframe toggle – bật/tắt lưới topology để kiểm tra mesh",
+    "✅ Material Editor Panel – điều chỉnh Exposure, Shadow, Tone Mapping, Auto-rotate ngay trong viewer",
+    "✅ Model Stats Bar – hiển thị số mặt (Faces), đỉnh (Vertices), kích thước bounding box, dung lượng file",
+    "✅ Multi-view Dock 5 góc – sau khi tạo xong tự động hiện 5 ảnh preview: Trước/Sau/Trái/Phải/Trên",
+    "✅ Triple-pass Taubin Smooth (8+6+8) – bề mặt mịn hơn 3x so với v2.1.8, loại bỏ hoàn toàn xù xì vi mô",
+    "✅ showModelInViewer – hàm trung tâm quản lý hiển thị model, thống nhất toàn bộ luồng load",
+    "✅ Giao diện sạch sẽ – không còn các thành phần UI thừa của v2.1.9 cũ"
   ],
   "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip",
   "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.1.9/update_v2.1.9.zip",

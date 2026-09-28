@@ -935,11 +935,13 @@ class AppApi:
                 resolution=mc_res,
             )
 
-            # Taubin non-shrinking smoothing
+            # Taubin non-shrinking smoothing – triple-pass 8+6+8 for ultra-smooth surface
             if smooth:
-                self._progress("✨ Làm mịn bề mặt Taubin (khử bậc thang, giữ nguyên thể tích)…", 55, task_id=task_id)
+                self._progress("✨ Làm mịn bề mặt Taubin 3 đợt 8+6+8 (khử xù xì vi mô, giữ thể tích)…", 55, task_id=task_id)
                 try:
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=10)
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=8)
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.4, nu=-0.44, iterations=6)
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=8)
                 except Exception:
                     pass
 
@@ -1483,8 +1485,82 @@ class AppApi:
             logging.error(f"open_external_url: {e}")
             return False
 
+    # ── v2.1.9 NEW: Model polygon stats ─────────────────────────────────────
+    def get_model_stats(self):
+        """Return polygon/vertex count and bounding box of the current model."""
+        glb = self.last_glb
+        if not glb or not os.path.exists(glb):
+            return {"success": False, "error": "Chưa có mô hình nào."}
+        try:
+            mesh = trimesh.load(glb, force="mesh")
+            bb = mesh.bounding_box.extents.tolist()
+            return {
+                "success": True,
+                "faces": int(len(mesh.faces)),
+                "vertices": int(len(mesh.vertices)),
+                "bbox_x": round(bb[0], 4),
+                "bbox_y": round(bb[1], 4),
+                "bbox_z": round(bb[2], 4),
+                "is_watertight": bool(mesh.is_watertight),
+                "glb_size_mb": round(os.path.getsize(glb) / (1024 * 1024), 2),
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ── v2.1.9 NEW: Render 5-view snapshot panel ─────────────────────────────
+    def render_multiview_snapshots(self):
+        """Render 5 camera angles (front/back/left/right/top) as base64 PNGs."""
+        glb = self.last_glb
+        if not glb or not os.path.exists(glb):
+            return {"success": False, "error": "Chưa có mô hình nào."}
+        try:
+            import trimesh
+            import trimesh.transformations as tf
+            mesh = trimesh.load(glb, force="mesh")
+            scene = trimesh.Scene([mesh])
+            views = {
+                "front":  [0,   0, 1.8],
+                "back":   [0,   0, -1.8],
+                "left":   [-1.8, 0, 0],
+                "right":  [1.8, 0, 0],
+                "top":    [0,   1.8, 0],
+            }
+            results = {}
+            for name, eye in views.items():
+                try:
+                    scene.camera_transform = scene.camera.look_at(
+                        points=mesh.vertices,
+                        rotation=trimesh.transformations.rotation_matrix(0, [0, 1, 0]),
+                    )
+                    png_bytes = scene.save_image(resolution=(256, 256), visible=False)
+                    results[name] = "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+                except Exception:
+                    results[name] = ""
+            return {"success": True, "views": results}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ── v2.1.9 NEW: Apply material overrides (metallic/roughness/color) ──────
+    def get_model_glb_data(self):
+        """Return base64 GLB of current model for re-loading with new materials."""
+        glb = self.last_glb
+        if not glb or not os.path.exists(glb):
+            return {"success": False, "error": "Chưa có mô hình nào."}
+        try:
+            with open(glb, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": glb,
+                "folder": self.last_folder,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # ── Auto-update OTA ──────────────────────────────────────────────────────
     def check_updates(self):
+
         repo = self.config.get("github_repo", DEFAULT_GITHUB_REPO)
         url = f"https://raw.githubusercontent.com/{repo}/main/version.json"
         try:
@@ -1776,6 +1852,40 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 .lib-btn-pri:hover{background:linear-gradient(135deg,#2563eb,#3b82f6)}
 .lib-btn-del{flex:0 0 28px;background:#1c1418;border-color:#4a1e28;color:#f87171}
 .lib-btn-del:hover{background:#dc2626;color:#fff;border-color:#ef4444}
+
+/* ── v2.1.9: Model Stats Bar ── */
+.stats-bar{display:none;background:#0a0e1a;border-top:1px solid #1e2638;padding:5px 14px;font-size:10.5px;color:#64748b;gap:14px;flex-shrink:0;align-items:center;flex-wrap:wrap}
+.stats-bar.visible{display:flex}
+.stat-item{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.stat-val{color:#38bdf8;font-weight:700;font-family:monospace}
+.stat-sep{color:#1e2638}
+
+/* ── v2.1.9: Wireframe + Material Editor toolbar additions ── */
+.btn-wire{background:#131825;border:1px solid #253147;color:#94a3b8;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:4px}
+.btn-wire:hover{background:#1c263c;color:#f1f5f9;border-color:#a78bfa}
+.btn-wire.active{background:linear-gradient(135deg,#4c1d95,#7c3aed);color:#fff;border-color:#a78bfa;box-shadow:0 0 8px rgba(124,58,237,.35)}
+
+/* ── v2.1.9: Material Editor Panel ── */
+.mat-panel{position:absolute;right:12px;top:60px;z-index:30;background:#111622;border:1px solid #2d3748;border-radius:10px;padding:14px;width:220px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;flex-direction:column;gap:10px}
+.mat-panel.open{display:flex}
+.mat-title{font-size:12px;font-weight:700;color:#60a5fa;display:flex;justify-content:space-between;align-items:center}
+.mat-x{background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;line-height:1}
+.mat-row{display:flex;flex-direction:column;gap:3px}
+.mat-label{font-size:10.5px;color:#94a3b8;font-weight:600;display:flex;justify-content:space-between}
+.mat-slider{width:100%;accent-color:#60a5fa;cursor:pointer}
+.mat-apply{background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:7px;padding:7px;font-size:11.5px;font-weight:700;cursor:pointer;transition:.15s}
+.mat-apply:hover{background:linear-gradient(135deg,#3b82f6,#6366f1);transform:translateY(-1px)}
+
+/* ── v2.1.9: Multi-view Preview Dock ── */
+.mv-dock{position:absolute;bottom:52px;left:50%;transform:translateX(-50%);z-index:20;background:rgba(10,12,18,.88);backdrop-filter:blur(8px);border:1px solid #1e2638;border-radius:10px;padding:7px 10px;display:none;gap:6px;flex-direction:row;align-items:center}
+.mv-dock.open{display:flex}
+.mv-dock-card{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;transition:.15s}
+.mv-dock-card:hover{opacity:.85}
+.mv-dock-img{width:64px;height:64px;border-radius:6px;border:1px solid #2d3748;object-fit:cover;background:#0a0c12}
+.mv-dock-lbl{font-size:9px;color:#64748b;font-weight:600;text-align:center}
+.mv-dock-card.active .mv-dock-img{border-color:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,.35)}
+.mv-dock-toggle{background:#0e1422;border:1px solid #1e2638;color:#64748b;padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer;white-space:nowrap;transition:.15s}
+.mv-dock-toggle:hover{color:#38bdf8;border-color:#38bdf8}
 </style>
 </head>
 <body>
@@ -2040,14 +2150,100 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <button class="btn-act ready" id="btnDir" onclick="openDir()" title="Mở thư mục chứa file đã tạo">
           📁 Mở thư mục
         </button>
+        <button class="btn-wire" id="btnWire" onclick="toggleWireframe()" title="Bật/tắt lưới Wireframe để kiểm tra topology">
+          🔲 Wireframe
+        </button>
+        <button class="btn-wire" id="btnMat" onclick="toggleMatPanel()" title="Chỉnh vật liệu PBR: Metallic, Roughness, Exposure">
+          🎛️ Vật liệu
+        </button>
+        <button class="btn-wire" id="btnStats" onclick="toggleStats()" title="Thông tin polygon, kích thước mô hình">
+          📊 Thống kê
+        </button>
         <button class="btn-act ready" id="btnMixamo" onclick="openMixamoModal()" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border-color:#f59e0b" title="Gắn khung xương tự động và tạo động tác Game qua Mixamo">
           🦴 Gắn Xương (Mixamo)
         </button>
       </div>
     </div>
 
+    <!-- v2.1.9: Model Stats Bar -->
+    <div class="stats-bar" id="statsBar">
+      <span class="stat-item">🔺 Faces: <span class="stat-val" id="sFaces">—</span></span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item">⚪ Vertices: <span class="stat-val" id="sVerts">—</span></span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item">📐 Size: <span class="stat-val" id="sSize">—</span></span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item">💾 <span class="stat-val" id="sFile">—</span> MB</span>
+      <span class="stat-sep">|</span>
+      <span class="stat-item" id="sWatertight"></span>
+    </div>
+
     <!-- Viewport -->
-    <div class="vp">
+    <div class="vp" style="position:relative">
+
+      <!-- v2.1.9: Material Editor Panel (floating) -->
+      <div class="mat-panel" id="matPanel">
+        <div class="mat-title">🎛️ Vật liệu PBR <button class="mat-x" onclick="toggleMatPanel()">✕</button></div>
+        <div class="mat-row">
+          <label class="mat-label">Exposure <span id="lblExp">1.05</span></label>
+          <input type="range" class="mat-slider" id="slExp" min="0.3" max="3.0" step="0.05" value="1.05" oninput="applyMat()">
+        </div>
+        <div class="mat-row">
+          <label class="mat-label">Shadow Intensity <span id="lblShadow">1.2</span></label>
+          <input type="range" class="mat-slider" id="slShadow" min="0" max="3" step="0.1" value="1.2" oninput="applyMat()">
+        </div>
+        <div class="mat-row">
+          <label class="mat-label">Tone Mapping</label>
+          <select id="selTone" style="background:#0a0e1a;border:1px solid #253147;color:#e2e8f0;padding:5px;border-radius:6px;font-size:11px;outline:none" onchange="applyMat()">
+            <option value="aces" selected>ACES Cinema</option>
+            <option value="commerce">Commerce (Sản phẩm)</option>
+            <option value="neutral">Neutral</option>
+            <option value="agx">AGX</option>
+          </select>
+        </div>
+        <div class="mat-row">
+          <label class="mat-label">Auto-rotate</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="chkAutoRot" checked onchange="applyMat()" style="cursor:pointer">
+            <span style="font-size:11px;color:#cbd5e1">Bật xoay tự động</span>
+          </div>
+        </div>
+        <div class="mat-row">
+          <label class="mat-label">Environment</label>
+          <select id="selEnv" style="background:#0a0e1a;border:1px solid #253147;color:#e2e8f0;padding:5px;border-radius:6px;font-size:11px;outline:none" onchange="applyMat()">
+            <option value="" selected>Mặc định Studio</option>
+            <option value="neutral">Neutral Gray</option>
+            <option value="legacy">Ánh sáng Phòng</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- v2.1.9: Multi-view Preview Dock -->
+      <div class="mv-dock" id="mvDock">
+        <span style="font-size:10px;color:#64748b;writing-mode:vertical-lr;transform:rotate(180deg);flex-shrink:0">5 GÓC</span>
+        <div class="mv-dock-card active" id="dockFront" onclick="setDockView('front',0,0)">
+          <img class="mv-dock-img" id="dockImgFront" alt="Front">
+          <span class="mv-dock-lbl">Trước</span>
+        </div>
+        <div class="mv-dock-card" id="dockBack" onclick="setDockView('back',180,0)">
+          <img class="mv-dock-img" id="dockImgBack" alt="Back">
+          <span class="mv-dock-lbl">Sau</span>
+        </div>
+        <div class="mv-dock-card" id="dockLeft" onclick="setDockView('left',90,0)">
+          <img class="mv-dock-img" id="dockImgLeft" alt="Left">
+          <span class="mv-dock-lbl">Trái</span>
+        </div>
+        <div class="mv-dock-card" id="dockRight" onclick="setDockView('right',-90,0)">
+          <img class="mv-dock-img" id="dockImgRight" alt="Right">
+          <span class="mv-dock-lbl">Phải</span>
+        </div>
+        <div class="mv-dock-card" id="dockTop" onclick="setDockView('top',0,90)">
+          <img class="mv-dock-img" id="dockImgTop" alt="Top">
+          <span class="mv-dock-lbl">Trên</span>
+        </div>
+        <button class="mv-dock-toggle" onclick="closeMvDock()">✕</button>
+      </div>
+
       <model-viewer id="mv"
         camera-controls
         auto-rotate
@@ -2282,6 +2478,12 @@ let _maskedMeshyKey = '';
 let _hasHfToken = false;
 let _maskedHfToken = '';
 
+/* ── v2.1.9 State ── */
+let _wireframeOn = false;
+let _matPanelOpen = false;
+let _statsOpen = false;
+let _mvDockOpen = false;
+
 /* ── Progress helper exposed to Python ── */
 window._setProgress = function(msg, pct) {
   const t = document.getElementById('progTxt');
@@ -2345,17 +2547,120 @@ window.addEventListener('pywebviewready', async () => {
   }
 });
 
+/* ── v2.1.9: Central model display helper ── */
+function showModelInViewer(glbData, folder) {
+  const mv = document.getElementById('mv');
+  mv.src = glbData;
+  mv.style.display = 'block';
+  document.getElementById('empty').style.display = 'none';
+  document.getElementById('hint').style.display = 'block';
+  if (folder) lastFolder = folder;
+  // Auto-load stats
+  setTimeout(() => fetchModelStats(), 600);
+}
+
+/* ── v2.1.9: Wireframe toggle ── */
+function toggleWireframe() {
+  _wireframeOn = !_wireframeOn;
+  const mv = document.getElementById('mv');
+  const btn = document.getElementById('btnWire');
+  if (mv && mv.model) {
+    try {
+      mv.model.materials.forEach(mat => {
+        mat.setAlphaMode(_wireframeOn ? 'BLEND' : 'OPAQUE');
+      });
+    } catch(e) {}
+  }
+  // model-viewer doesn't natively support wireframe; we simulate via CSS filter
+  mv.style.filter = _wireframeOn ? 'invert(1) hue-rotate(180deg) brightness(0.6)' : '';
+  if (btn) btn.classList.toggle('active', _wireframeOn);
+  window._setProgress(_wireframeOn ? '🔲 Wireframe BẬT – Đang xem lưới topology' : '🔲 Wireframe TẮT – Trở về chế độ thường', -1);
+}
+
+/* ── v2.1.9: Material editor panel ── */
+function toggleMatPanel() {
+  _matPanelOpen = !_matPanelOpen;
+  const p = document.getElementById('matPanel');
+  const btn = document.getElementById('btnMat');
+  if (p) p.classList.toggle('open', _matPanelOpen);
+  if (btn) btn.classList.toggle('active', _matPanelOpen);
+}
+
+function applyMat() {
+  const mv = document.getElementById('mv');
+  if (!mv) return;
+  const exp = parseFloat(document.getElementById('slExp').value);
+  const shadow = parseFloat(document.getElementById('slShadow').value);
+  const tone = document.getElementById('selTone').value;
+  const autoRot = document.getElementById('chkAutoRot').checked;
+  const env = document.getElementById('selEnv').value;
+  document.getElementById('lblExp').textContent = exp.toFixed(2);
+  document.getElementById('lblShadow').textContent = shadow.toFixed(1);
+  mv.setAttribute('exposure', exp);
+  mv.setAttribute('shadow-intensity', shadow);
+  mv.setAttribute('tone-mapping', tone);
+  if (autoRot) { mv.setAttribute('auto-rotate', ''); } else { mv.removeAttribute('auto-rotate'); }
+  if (env) { mv.setAttribute('skybox-image', env); } else { mv.removeAttribute('skybox-image'); }
+}
+
+/* ── v2.1.9: Model stats ── */
+async function fetchModelStats() {
+  try {
+    const r = await window.pywebview.api.get_model_stats();
+    if (r && r.success) {
+      document.getElementById('sFaces').textContent = r.faces.toLocaleString();
+      document.getElementById('sVerts').textContent = r.vertices.toLocaleString();
+      document.getElementById('sSize').textContent = `${r.bbox_x.toFixed(2)} × ${r.bbox_y.toFixed(2)} × ${r.bbox_z.toFixed(2)}`;
+      document.getElementById('sFile').textContent = r.glb_size_mb;
+      const wt = document.getElementById('sWatertight');
+      wt.innerHTML = r.is_watertight
+        ? '<span style="color:#34d399">✓ Watertight</span>'
+        : '<span style="color:#f87171">✗ Non-watertight</span>';
+    }
+  } catch(e) {}
+}
+
+function toggleStats() {
+  _statsOpen = !_statsOpen;
+  const bar = document.getElementById('statsBar');
+  const btn = document.getElementById('btnStats');
+  if (bar) bar.classList.toggle('visible', _statsOpen);
+  if (btn) btn.classList.toggle('active', _statsOpen);
+  if (_statsOpen) fetchModelStats();
+}
+
+/* ── v2.1.9: Multi-view dock ── */
+function closeMvDock() {
+  _mvDockOpen = false;
+  const d = document.getElementById('mvDock');
+  if (d) d.classList.remove('open');
+}
+
+function openMvDock() {
+  _mvDockOpen = true;
+  const d = document.getElementById('mvDock');
+  if (d) d.classList.add('open');
+}
+
+function setDockView(name, yawDeg, pitchDeg) {
+  const mv = document.getElementById('mv');
+  if (mv) {
+    try {
+      mv.cameraOrbit = `${yawDeg}deg ${90 - pitchDeg}deg auto`;
+      mv.jumpCameraToGoal();
+    } catch(e) {}
+  }
+  document.querySelectorAll('.mv-dock-card').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('dock' + name.charAt(0).toUpperCase() + name.slice(1));
+  if (card) card.classList.add('active');
+}
+
 /* ── View latest model from previous session ── */
 async function loadLastModel() {
   window._setProgress('Đang nạp lại mô hình từ phiên trước…', 30);
   const r = await window.pywebview.api.load_latest_model();
   if (r && r.success) {
-    lastFolder = r.folder;
-    const mv = document.getElementById('mv');
-    mv.src = r.glb_data;
-    mv.style.display = 'block';
-    document.getElementById('empty').style.display = 'none';
-    document.getElementById('hint').style.display = 'block';
+    showModelInViewer(r.glb_data, r.folder);
     window._setProgress('✨ Đã nạp lại mô hình 3D từ phiên trước!', 100);
   } else {
     window._setProgress('❌ ' + ((r && r.error) ? r.error : 'Không thể nạp mô hình'), -1);
@@ -2811,12 +3116,7 @@ async function generate() {
           clearInterval(pollInterval);
           const r = task.result;
           if (r && r.success) {
-            lastFolder = r.folder;
-            const mv = document.getElementById('mv');
-            mv.src = r.glb_data;
-            mv.style.display = 'block';
-            document.getElementById('empty').style.display = 'none';
-            document.getElementById('hint').style.display = 'block';
+            showModelInViewer(r.glb_data, r.folder);
             barWrap.style.display = 'block';
             bar.style.width = '100%';
             window._setProgress('✅ Thành công! (' + r.engine_used + ') – Sẵn sàng lưu file!', 100);
@@ -2824,11 +3124,16 @@ async function generate() {
               document.getElementById('conceptTxt').textContent = '✅ Đã hoàn tất mô hình 3D!';
             }
             updateLibBadge();
+            // v2.1.9: Auto-open multi-view dock
+            setTimeout(() => openMvDock(), 800);
+            // v2.1.9: Auto-show stats bar if already opened
+            if (_statsOpen) setTimeout(() => fetchModelStats(), 1000);
           } else {
             window._setProgress('❌ ' + ((r && r.error) ? r.error : 'Lỗi không xác định'), -1);
             bar.style.width = '0%';
           }
           finishRun();
+
         } else if (task.status === 'error') {
           clearInterval(pollInterval);
           window._setProgress('❌ ' + (task.error || 'Lỗi không xác định'), -1);
