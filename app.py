@@ -40,7 +40,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.2.2"
+APP_VERSION = "v3.0.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -610,25 +610,6 @@ class AppApi:
     def select_image(self):
         return self.select_multi_image("front")
 
-    def select_multi_image(self, slot="front"):
-        if not self._window:
-            return None
-        types = ("Image Files (*.png;*.jpg;*.jpeg;*.webp)", "All Files (*.*)")
-        result = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
-        if result:
-            fp = result[0]
-            try:
-                with open(fp, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                ext = os.path.splitext(fp)[1].lower().lstrip(".")
-                if ext == "jpg":
-                    ext = "jpeg"
-                return {"slot": slot, "path": fp, "dataUrl": f"data:image/{ext};base64,{b64}", "name": os.path.basename(fp)}
-            except Exception as e:
-                return {"slot": slot, "error": str(e)}
-        return None
-
-    # ── v2.2.1: Auto slice 2x2 multi-view collage image ───────────────────────
     def split_and_load_grid_image(self):
         """Allows user to select a 2x2 grid image and automatically slices it into 4 slots: front, back, right, left."""
         if not self._window:
@@ -660,7 +641,6 @@ class AppApi:
                         return Image.fromarray(arr)
                 return im
 
-            # 4 quadrants with 2px margin from center line
             raw_slices = {
                 "front": img.crop((0, 0, max(1, mid_x - 2), max(1, mid_y - 2))),
                 "back": img.crop((min(w - 1, mid_x + 2), 0, w, max(1, mid_y - 2))),
@@ -689,75 +669,25 @@ class AppApi:
             logging.exception("split_and_load_grid_image error")
             return {"success": False, "error": str(e)}
 
-    # ── v2.2.0 Part B: Mesh Repair & Post-processing Pipeline ────────────────
-    def _post_process_mesh(self, mesh, smooth_level="medium", task_id=None):
-        """
-        Comprehensive mesh repair and quality improvement.
-        smooth_level: 'off' | 'light' | 'medium' | 'strong'
-        """
-        try:
-            import trimesh.repair as tr_repair
-            import trimesh.smoothing as tr_smooth
-
-            # ── Step 1: Keep only the largest connected component ──────────────
-            self._progress("🔧 Xóa mảnh vỡ tách rời (Step 1/5)…", -1, task_id=task_id)
+    def select_multi_image(self, slot="front"):
+        if not self._window:
+            return None
+        types = ("Image Files (*.png;*.jpg;*.jpeg;*.webp)", "All Files (*.*)")
+        result = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
+        if result:
+            fp = result[0]
             try:
-                comps = mesh.split(only_watertight=False)
-                if len(comps) > 1:
-                    mesh = max(comps, key=lambda c: len(c.faces))
-            except Exception:
-                pass
-
-            # ── Step 2: Remove degenerate / duplicate geometry ─────────────────
-            self._progress("🔧 Xóa tam giác lỗi, trùng lặp (Step 2/5)…", -1, task_id=task_id)
-            try:
-                mesh.remove_degenerate_faces()
-                mesh.remove_duplicate_faces()
-                mesh.remove_unreferenced_vertices()
-            except Exception:
-                pass
-
-            # ── Step 3: Repair holes ───────────────────────────────────────────
-            self._progress("🔧 Vá lỗ hổng mesh (Step 3/5)…", -1, task_id=task_id)
-            try:
-                tr_repair.fill_holes(mesh)
-            except Exception:
-                pass
-
-            # ── Step 4: Fix face winding & vertex normals ──────────────────────
-            self._progress("🔧 Sửa pháp tuyến & hướng mặt (Step 4/5)…", -1, task_id=task_id)
-            try:
-                tr_repair.fix_winding(mesh)
-                tr_repair.fix_normals(mesh)
-            except Exception:
-                pass
-
-            # ── Step 5: Adaptive Taubin smoothing ─────────────────────────────
-            smooth_cfg = {
-                "off":    (0,    0,     0),
-                "light":  (0.5,  -0.53, 6),
-                "medium": (0.5,  -0.53, 16),  # 8+8 double-pass
-                "strong": (0.5,  -0.53, 28),  # 10+8+10 triple-pass
-            }
-            lam, nu, iters = smooth_cfg.get(smooth_level, smooth_cfg["medium"])
-            if iters > 0:
-                self._progress(f"✨ Làm mịn Taubin {smooth_level} ({iters} vòng, Step 5/5)…", -1, task_id=task_id)
-                try:
-                    # Split passes for better volume preservation
-                    half = iters // 2
-                    trimesh.smoothing.filter_taubin(mesh, lamb=lam, nu=nu, iterations=half)
-                    trimesh.smoothing.filter_taubin(mesh, lamb=lam * 0.8, nu=nu * 0.85, iterations=iters - half)
-                except Exception:
-                    pass
-
-            return mesh
-
-        except Exception as e:
-            logging.warning(f"_post_process_mesh error: {e}")
-            return mesh
+                with open(fp, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                ext = os.path.splitext(fp)[1].lower().lstrip(".")
+                if ext == "jpg":
+                    ext = "jpeg"
+                return {"slot": slot, "path": fp, "dataUrl": f"data:image/{ext};base64,{b64}", "name": os.path.basename(fp)}
+            except Exception as e:
+                return {"slot": slot, "error": str(e)}
+        return None
 
     # ── live progress helper ─────────────────────────────────────────────────
-
     def _progress(self, msg: str, pct: int = -1, task_id: str = None):
         if task_id and task_id in self._tasks:
             self._tasks[task_id]["msg"] = msg
@@ -782,7 +712,7 @@ class AppApi:
                           smooth=True, quality="pbr_1024",
                           num_steps=10, octree_res=160,
                           back_image=None, left_image=None, right_image=None,
-                          color_mode="color", smooth_level="medium"):
+                          color_mode="color"):
         task_id = str(time.time_ns())
         self._tasks[task_id] = {
             "status": "running", "msg": "Đang khởi động tiến trình GPU…",
@@ -796,7 +726,7 @@ class AppApi:
                     bake_tex=bake_tex, smooth=smooth, quality=quality,
                     num_steps=num_steps, octree_res=octree_res,
                     back_image=back_image, left_image=left_image, right_image=right_image,
-                    color_mode=color_mode, smooth_level=smooth_level,
+                    color_mode=color_mode,
                     task_id=task_id
                 )
                 if res.get("success"):
@@ -812,7 +742,7 @@ class AppApi:
 
     def start_generate_from_text(self, prompt, engine="turbo", quality="pbr_1024",
                                  smooth=True, num_steps=10, octree_res=160,
-                                 color_mode="color", smooth_level="medium"):
+                                 color_mode="color"):
         task_id = str(time.time_ns())
         self._tasks[task_id] = {
             "status": "running", "msg": "Đang phân tích câu lệnh văn bản…",
@@ -824,7 +754,7 @@ class AppApi:
                 res = self.generate_from_text(
                     prompt, engine=engine, quality=quality, smooth=smooth,
                     num_steps=num_steps, octree_res=octree_res,
-                    color_mode=color_mode, smooth_level=smooth_level,
+                    color_mode=color_mode,
                     task_id=task_id
                 )
                 if res.get("success"):
@@ -921,8 +851,7 @@ class AppApi:
 
     # ── TEXT TO 3D PIPELINE ──────────────────────────────────────────────────
     def generate_from_text(self, prompt: str, engine="turbo", quality="pbr_1024",
-                           smooth=True, num_steps=10, octree_res=256, color_mode="color",
-                           smooth_level="medium", task_id=None):
+                           smooth=True, num_steps=10, octree_res=256, task_id=None):
         prompt = prompt.strip()
         if not prompt:
             return {"success": False, "error": "Vui lòng nhập mô tả văn bản cần tạo 3D!"}
@@ -967,22 +896,19 @@ class AppApi:
                 self._progress("🌐 Đưa hình phác họa vào Hugging Face Cloud Free tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hf_free_cloud(
                     concept_file, num_steps=num_steps, octree_res=octree_res,
-                    target_dir=item_dir, task_id=task_id, color_mode=color_mode,
-                    smooth_level=smooth_level
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
             elif engine in ("turbo", "hunyuan3d"):
                 self._progress("🐉 Đưa hình phác họa vào RTX Hunyuan3D Turbo tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hunyuan3d_turbo(
                     concept_file, num_steps=num_steps, octree_res=octree_res,
-                    target_dir=item_dir, task_id=task_id, color_mode=color_mode,
-                    smooth_level=smooth_level
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
             else:
                 self._progress("⚡ Đưa hình phác họa vào GPU RTX TripoSR tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_local(
                     concept_file, quality=quality, smooth=smooth,
-                    target_dir=item_dir, task_id=task_id, color_mode=color_mode,
-                    smooth_level=smooth_level
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
 
             if res.get("success"):
@@ -1008,30 +934,29 @@ class AppApi:
                     smooth=True, quality="pbr_1024",
                     num_steps=10, octree_res=160,
                     back_image=None, left_image=None, right_image=None,
-                    color_mode="color", smooth_level="medium", task_id=None):
+                    color_mode="color", task_id=None):
         if engine == "meshy":
             return self._gen_meshy_cloud(file_path, enable_pbr=(color_mode != "clay"), color_mode=color_mode, task_id=task_id)
         if engine == "hffree":
             return self._gen_hf_free_cloud(
                 file_path, num_steps=num_steps, octree_res=octree_res,
                 back_image=back_image, left_image=left_image, right_image=right_image,
-                color_mode=color_mode, smooth_level=smooth_level, task_id=task_id
+                color_mode=color_mode, task_id=task_id
             )
         if engine in ("turbo", "hunyuan3d"):
             return self._gen_hunyuan3d_turbo(
                 file_path, num_steps=num_steps, octree_res=octree_res,
                 back_image=back_image, left_image=left_image, right_image=right_image,
-                color_mode=color_mode, smooth_level=smooth_level, task_id=task_id
+                color_mode=color_mode, task_id=task_id
             )
         return self._gen_local(
             file_path, quality=quality, smooth=smooth,
-            back_image=back_image, color_mode=color_mode,
-            smooth_level=smooth_level, task_id=task_id
+            back_image=back_image, color_mode=color_mode, task_id=task_id
         )
 
     # ── ENGINE 1: LOCAL FAST (RTX TRIPOSR ~15s) ──────────────────────────────
     def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None, task_id=None,
-                   back_image=None, color_mode="color", smooth_level="medium"):
+                   back_image=None, color_mode="color"):
         global model, current_device
         if model is None or not _model_ready.is_set():
             self._progress("⏳ Đang nạp TripoSR vào GPU RTX 3050 (~15s)…", 5, task_id=task_id)
@@ -1069,20 +994,13 @@ class AppApi:
                 resolution=mc_res,
             )
 
-            # Taubin non-shrinking smoothing – triple-pass 8+6+8 for ultra-smooth surface
+            # Taubin non-shrinking smoothing
             if smooth:
-                self._progress("✨ Làm mịn bề mặt Taubin 3 đợt 8+6+8 (khử xù xì vi mô, giữ thể tích)…", 55, task_id=task_id)
+                self._progress("✨ Làm mịn bề mặt Taubin (khử bậc thang, giữ nguyên thể tích)…", 55, task_id=task_id)
                 try:
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=8)
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.4, nu=-0.44, iterations=6)
-                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=8)
+                    trimesh.smoothing.filter_taubin(meshes[0], lamb=0.5, nu=-0.53, iterations=10)
                 except Exception:
                     pass
-
-            # ── v2.2.0 Part B: Post-process repair pipeline ──────────────────
-            if smooth_level != "off":
-                self._progress("🔧 v2.2.0 Mesh Repair: Vá lỗ, xóa mảnh vỡ, sửa pháp tuyến…", 60, task_id=task_id)
-                meshes[0] = self._post_process_mesh(meshes[0], smooth_level=smooth_level, task_id=task_id)
 
             glb_path = os.path.join(item_dir, "model.glb")
             obj_path = os.path.join(item_dir, "model.obj")
@@ -1149,8 +1067,7 @@ class AppApi:
 
     # ── ENGINE 2: LOCAL REALISTIC (HUNYUAN3D-2 TURBO DIT FLOW MATCHING) ─────
     def _gen_hunyuan3d_turbo(self, file_path, num_steps=10, octree_res=160, target_dir=None, task_id=None,
-                             back_image=None, left_image=None, right_image=None, color_mode="color",
-                             smooth_level="medium"):
+                             back_image=None, left_image=None, right_image=None, color_mode="color"):
         global hunyuan_pipeline
 
         if not is_hunyuan_downloaded():
@@ -1220,20 +1137,21 @@ class AppApi:
             if isinstance(mesh, list):
                 mesh = mesh[0]
 
-            # 1. Mesh cleaning: remove disconnected floating artifacts and boundary slabs
+            # 1. Mesh cleaning & watertight repair (fills open cavities, fixes winding & normals)
             try:
                 components = mesh.split(only_watertight=False)
                 if len(components) > 1:
-                    mesh = max(components, key=lambda c: len(c.vertices))
+                    mesh = max(components, key=lambda c: len(c.faces))
+                mesh.remove_degenerate_faces()
+                mesh.remove_duplicate_faces()
                 mesh.remove_unreferenced_vertices()
+                import trimesh.repair as tr_repair
+                tr_repair.fill_holes(mesh)
+                tr_repair.fix_winding(mesh)
+                tr_repair.fix_normals(mesh)
                 mesh.export(os.path.join(item_dir, "raw_hunyuan.glb"))
-            except Exception:
-                pass
-
-            # ── v2.2.0 Part B: Advanced post-process repair ───────────────────
-            if smooth_level != "off":
-                self._progress("🔧 v2.2.0 Mesh Repair: Vá lỗ, sửa pháp tuyến, làm mịn nâng cao…", 80, task_id=task_id)
-                mesh = self._post_process_mesh(mesh, smooth_level=smooth_level, task_id=task_id)
+            except Exception as e_repair:
+                logging.warning(f"Mesh repair notice: {e_repair}")
 
             # ── CLAY SCULPTURE OR MESHY-GRADE 3D RELIEF & PBR TEXTURE ENGINE ──
             if color_mode == "clay":
@@ -1528,6 +1446,43 @@ class AppApi:
             os.system(f'explorer.exe "{os.path.normpath(target)}"')
             return {"success": True}
 
+    def enhance_texture_4k(self, folder=None, task_id=None):
+        """
+        Nâng cấp Texture Map của mô hình 3D lên 4K bằng Real-ESRGAN
+        và khôi phục độ nét khuôn mặt bằng FaceRestorationPipeline.
+        Ghi đè file model.glb và model.obj.
+        """
+        target_folder = folder or self.last_folder
+        if not target_folder or not os.path.exists(target_folder):
+            return {"success": False, "error": "Chưa có mô hình nào được chọn để nâng cấp Texture 4K."}
+
+        try:
+            from texture_postprocess import apply_texture_to_model
+
+            def _prog(msg, pct):
+                self._progress(msg, pct, task_id=task_id)
+
+            res = apply_texture_to_model(
+                target_folder,
+                enable_upscale=True,
+                enable_face_restore=True,
+                target_scale=4,
+                progress_cb=_prog
+            )
+
+            if res.get("success"):
+                glb_path = res.get("glb_path", os.path.join(target_folder, "model.glb"))
+                if os.path.exists(glb_path):
+                    with open(glb_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    res["glb_data"] = f"data:model/gltf-binary;base64,{b64}"
+                    self.last_glb = glb_path
+                res["folder"] = target_folder
+            return res
+        except Exception as e:
+            logging.exception("enhance_texture_4k error")
+            return {"success": False, "error": str(e)}
+
     def export_file(self, file_type="glb"):
         src = self.last_glb if file_type == "glb" else self.last_obj
         if not src or not os.path.exists(src):
@@ -1630,120 +1585,8 @@ class AppApi:
             logging.error(f"open_external_url: {e}")
             return False
 
-    # ── Real-ESRGAN 4K Texture & Face Restoration Pipeline ────────────────────
-    def enhance_texture_4k(self, folder=None, task_id=None):
-        """
-        Nâng cấp Texture Map của mô hình 3D lên 4K bằng Real-ESRGAN
-        và khôi phục độ nét khuôn mặt bằng FaceRestorationPipeline.
-        Ghi đè file model.glb và model.obj.
-        """
-        target_folder = folder or self.last_folder
-        if not target_folder or not os.path.exists(target_folder):
-            return {"success": False, "error": "Chưa có mô hình nào được chọn để nâng cấp Texture 4K."}
-
-        try:
-            from texture_postprocess import apply_texture_to_model
-
-            def _prog(msg, pct):
-                self._progress(msg, pct, task_id=task_id)
-
-            res = apply_texture_to_model(
-                target_folder,
-                enable_upscale=True,
-                enable_face_restore=True,
-                target_scale=4,
-                progress_cb=_prog
-            )
-
-            if res.get("success"):
-                glb_path = res.get("glb_path", os.path.join(target_folder, "model.glb"))
-                if os.path.exists(glb_path):
-                    with open(glb_path, "rb") as f:
-                        b64 = base64.b64encode(f.read()).decode()
-                    res["glb_data"] = f"data:model/gltf-binary;base64,{b64}"
-                    self.last_glb = glb_path
-                res["folder"] = target_folder
-            return res
-        except Exception as e:
-            logging.exception("enhance_texture_4k error")
-            return {"success": False, "error": str(e)}
-
-    # ── v2.1.9 NEW: Model polygon stats ─────────────────────────────────────
-    def get_model_stats(self):
-        """Return polygon/vertex count and bounding box of the current model."""
-        glb = self.last_glb
-        if not glb or not os.path.exists(glb):
-            return {"success": False, "error": "Chưa có mô hình nào."}
-        try:
-            mesh = trimesh.load(glb, force="mesh")
-            bb = mesh.bounding_box.extents.tolist()
-            return {
-                "success": True,
-                "faces": int(len(mesh.faces)),
-                "vertices": int(len(mesh.vertices)),
-                "bbox_x": round(bb[0], 4),
-                "bbox_y": round(bb[1], 4),
-                "bbox_z": round(bb[2], 4),
-                "is_watertight": bool(mesh.is_watertight),
-                "glb_size_mb": round(os.path.getsize(glb) / (1024 * 1024), 2),
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    # ── v2.1.9 NEW: Render 5-view snapshot panel ─────────────────────────────
-    def render_multiview_snapshots(self):
-        """Render 5 camera angles (front/back/left/right/top) as base64 PNGs."""
-        glb = self.last_glb
-        if not glb or not os.path.exists(glb):
-            return {"success": False, "error": "Chưa có mô hình nào."}
-        try:
-            import trimesh
-            import trimesh.transformations as tf
-            mesh = trimesh.load(glb, force="mesh")
-            scene = trimesh.Scene([mesh])
-            views = {
-                "front":  [0,   0, 1.8],
-                "back":   [0,   0, -1.8],
-                "left":   [-1.8, 0, 0],
-                "right":  [1.8, 0, 0],
-                "top":    [0,   1.8, 0],
-            }
-            results = {}
-            for name, eye in views.items():
-                try:
-                    scene.camera_transform = scene.camera.look_at(
-                        points=mesh.vertices,
-                        rotation=trimesh.transformations.rotation_matrix(0, [0, 1, 0]),
-                    )
-                    png_bytes = scene.save_image(resolution=(256, 256), visible=False)
-                    results[name] = "data:image/png;base64," + base64.b64encode(png_bytes).decode()
-                except Exception:
-                    results[name] = ""
-            return {"success": True, "views": results}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    # ── v2.1.9 NEW: Apply material overrides (metallic/roughness/color) ──────
-    def get_model_glb_data(self):
-        """Return base64 GLB of current model for re-loading with new materials."""
-        glb = self.last_glb
-        if not glb or not os.path.exists(glb):
-            return {"success": False, "error": "Chưa có mô hình nào."}
-        try:
-            with open(glb, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            return {
-                "success": True,
-                "glb_data": f"data:model/gltf-binary;base64,{b64}",
-                "glb_path": glb,
-                "folder": self.last_folder,
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
     # ── Auto-update OTA ──────────────────────────────────────────────────────
     def check_updates(self):
-
         repo = self.config.get("github_repo", DEFAULT_GITHUB_REPO)
         url = f"https://raw.githubusercontent.com/{repo}/main/version.json"
         try:
@@ -1867,6 +1710,10 @@ header{height:52px;background:#131722;border-bottom:1px solid #232936;display:fl
 
 /* ── Multi-View 4-slot grid ── */
 .mv-container{display:flex;flex-direction:column;gap:6px}
+
+.btn-grid-split{width:100%;background:linear-gradient(135deg,#1e1b4b,#312e81);border:1px solid #6366f1;color:#c7d2fe;padding:8px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:.18s;margin-bottom:8px;box-shadow:0 2px 8px rgba(99,102,241,.25)}
+.btn-grid-split:hover{background:linear-gradient(135deg,#312e81,#4338ca);border-color:#818cf8;color:#fff;transform:translateY(-1px);box-shadow:0 4px 12px rgba(99,102,241,.4)}
+
 .mv-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .mv-slot{background:#111622;border:1px solid #1e2638;border-radius:8px;padding:6px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:4px}
 .mv-slot:hover{border-color:#38bdf8;background:#151c2c}
@@ -2035,83 +1882,6 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 .lib-btn-pri:hover{background:linear-gradient(135deg,#2563eb,#3b82f6)}
 .lib-btn-del{flex:0 0 28px;background:#1c1418;border-color:#4a1e28;color:#f87171}
 .lib-btn-del:hover{background:#dc2626;color:#fff;border-color:#ef4444}
-
-/* ── v2.1.9: Model Stats Bar ── */
-.stats-bar{display:none;background:#0a0e1a;border-top:1px solid #1e2638;padding:5px 14px;font-size:10.5px;color:#64748b;gap:14px;flex-shrink:0;align-items:center;flex-wrap:wrap}
-.stats-bar.visible{display:flex}
-.stat-item{display:flex;align-items:center;gap:4px;white-space:nowrap}
-.stat-val{color:#38bdf8;font-weight:700;font-family:monospace}
-.stat-sep{color:#1e2638}
-
-/* ── v2.1.9: Wireframe + Material Editor toolbar additions ── */
-.btn-wire{background:#131825;border:1px solid #253147;color:#94a3b8;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:4px}
-.btn-wire:hover{background:#1c263c;color:#f1f5f9;border-color:#a78bfa}
-.btn-wire.active{background:linear-gradient(135deg,#4c1d95,#7c3aed);color:#fff;border-color:#a78bfa;box-shadow:0 0 8px rgba(124,58,237,.35)}
-
-/* ── v2.1.9: Material Editor Panel ── */
-.mat-panel{position:absolute;right:12px;top:60px;z-index:30;background:#111622;border:1px solid #2d3748;border-radius:10px;padding:14px;width:220px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;flex-direction:column;gap:10px}
-.mat-panel.open{display:flex}
-.mat-title{font-size:12px;font-weight:700;color:#60a5fa;display:flex;justify-content:space-between;align-items:center}
-.mat-x{background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;line-height:1}
-.mat-row{display:flex;flex-direction:column;gap:3px}
-.mat-label{font-size:10.5px;color:#94a3b8;font-weight:600;display:flex;justify-content:space-between}
-.mat-slider{width:100%;accent-color:#60a5fa;cursor:pointer}
-.mat-apply{background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:7px;padding:7px;font-size:11.5px;font-weight:700;cursor:pointer;transition:.15s}
-.mat-apply:hover{background:linear-gradient(135deg,#3b82f6,#6366f1);transform:translateY(-1px)}
-
-/* ── v2.1.9: Multi-view Preview Dock ── */
-.mv-dock{position:absolute;bottom:52px;left:50%;transform:translateX(-50%);z-index:20;background:rgba(10,12,18,.88);backdrop-filter:blur(8px);border:1px solid #1e2638;border-radius:10px;padding:7px 10px;display:none;gap:6px;flex-direction:row;align-items:center}
-.mv-dock.open{display:flex}
-.mv-dock-card{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;transition:.15s}
-.mv-dock-card:hover{opacity:.85}
-.mv-dock-img{width:64px;height:64px;border-radius:6px;border:1px solid #2d3748;object-fit:cover;background:#0a0c12}
-.mv-dock-lbl{font-size:9px;color:#64748b;font-weight:600;text-align:center}
-.mv-dock-card.active .mv-dock-img{border-color:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,.35)}
-.mv-dock-toggle{background:#0e1422;border:1px solid #1e2638;color:#64748b;padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer;white-space:nowrap;transition:.15s}
-.mv-dock-toggle:hover{color:#38bdf8;border-color:#38bdf8}
-
-/* ── v2.2.0: Step-based Sidebar Headers ── */
-.step-hdr{display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
-.step-num{width:18px;height:18px;border-radius:50%;background:#1e2638;color:#60a5fa;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid #2d3a52}
-.step-line{flex:1;height:1px;background:#1a2130}
-
-/* ── v2.2.0: Collapsible Advanced Settings ── */
-.adv-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10.5px;color:#64748b;font-weight:600;padding:4px 0;user-select:none;width:100%}
-.adv-toggle:hover{color:#94a3b8}
-.adv-toggle .arr{transition:transform .2s;font-size:9px}
-.adv-toggle.open .arr{transform:rotate(90deg)}
-.adv-body{display:none;flex-direction:column;gap:7px;padding-top:4px}
-.adv-body.open{display:flex}
-
-/* ── v2.2.0: Post-process Controls ── */
-.pp-row{display:flex;align-items:center;gap:8px;background:#0c1018;border:1px solid #1c2438;border-radius:7px;padding:7px 10px}
-.pp-icon{font-size:14px;flex-shrink:0}
-.pp-info{flex:1;display:flex;flex-direction:column;gap:2px}
-.pp-title{font-size:11px;font-weight:700;color:#e2e8f0}
-.pp-sub{font-size:10px;color:#64748b}
-.pp-select{background:#0a0e1a;border:1px solid #253147;color:#e2e8f0;padding:4px 7px;border-radius:5px;font-size:10.5px;outline:none;cursor:pointer}
-
-/* ── v2.2.0: Photo Guidance Modal ── */
-.guide-slots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.guide-slot{background:#0c1018;border:1px solid #1e2638;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:5px}
-.guide-slot-hdr{font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:6px}
-.guide-slot-tip{font-size:10.5px;color:#94a3b8;line-height:1.45}
-.guide-slot-tip b{color:#38bdf8}
-.guide-example{display:flex;gap:6px;margin-top:3px}
-.guide-ex-card{flex:1;border-radius:5px;padding:5px;text-align:center;font-size:9.5px;font-weight:700}
-.guide-ex-good{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#34d399}
-.guide-ex-bad{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);color:#f87171}
-
-/* ── v2.2.0: Slot status indicators ── */
-.mv-slot-status{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
-.slot-loaded{font-size:9px;font-weight:700;color:#34d399;display:none}
-.slot-loaded.show{display:inline}
-.slot-tip-btn{background:none;border:1px solid #1e2638;color:#64748b;font-size:9px;padding:1px 5px;border-radius:4px;cursor:pointer;transition:.15s}
-.slot-tip-btn:hover{color:#38bdf8;border-color:#38bdf8}
-
-/* ── v2.2.1: Grid Slicing Button ── */
-.btn-grid-split{width:100%;background:linear-gradient(135deg,#1e1b4b,#312e81);border:1px solid #6366f1;color:#c7d2fe;padding:8px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:.18s;margin-bottom:8px;box-shadow:0 2px 8px rgba(99,102,241,.25)}
-.btn-grid-split:hover{background:linear-gradient(135deg,#312e81,#4338ca);border-color:#818cf8;color:#fff;transform:translateY(-1px);box-shadow:0 4px 12px rgba(99,102,241,.4)}
 </style>
 </head>
 <body>
@@ -2119,7 +1889,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v2.1.4</span>
+    <span class="ver" id="ver">v3.0.0</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
@@ -2147,9 +1917,6 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
 <div class="layout">
   <div class="sidebar">
-    <!-- ── BƯỚC 1: NGUỒN & PHONG CÁCH ── -->
-    <div class="step-hdr"><div class="step-num">1</div><span>Nguồn & Phong Cách</span><div class="step-line"></div></div>
-
     <!-- Source Switcher: Image or Text -->
     <div class="src-switcher">
       <button class="src-tab active" id="srcTabImg" onclick="switchSource('image')">🖼️ Từ Hình Ảnh</button>
@@ -2158,21 +1925,24 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 
     <!-- Output Style Switcher: Full Color vs Clay Sculpture -->
     <div class="style-switcher">
-      <button class="style-tab active" id="styleTabColor" onclick="switchStyle('color')" title="Tự động tô màu và tạo vân PBR 1:1 siêu nét từ ảnh">🎨 Đầy Đủ Màu PBR</button>
-      <button class="style-tab clay" id="styleTabClay" onclick="switchStyle('clay')" title="Tạo khối tượng điêu khắc thạch cao trắng mịn màng, tối ưu cho In 3D & tự tô màu bằng Blender">🏛️ Tượng Clay (In 3D)</button>
+      <button class="style-tab active" id="styleTabColor" onclick="switchStyle('color')" title="Tự động tô màu và tạo vân PBR 1:1 siêu nét từ ảnh">🎨 Đầy Đủ Màu Sắc PBR</button>
+      <button class="style-tab clay" id="styleTabClay" onclick="switchStyle('clay')" title="Tạo khối tượng điêu khắc thạch cao trắng mịn màng, tối ưu cho In 3D & tự tô màu bằng Blender">🏛️ Tượng Thạch Cao Clay (Blender)</button>
     </div>
 
-    <!-- ── BƯỚC 2: NẠP DỮ LIỆU ĐẦU VÀO ── -->
-    <div class="step-hdr"><div class="step-num">2</div><span>Dữ Liệu Đầu Vào</span><div class="step-line"></div></div>
+    <!-- 4 Engine tabs: Local Offline + Free Cloud + Meshy Pro -->
+    <div class="tabs" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
+      <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')" title="NVIDIA RTX 3050 Offline 100% - Không tốn tiền, không giới hạn, Khớp 1:1">🐉 RTX Đẳng Cấp</button>
+      <button class="tab hffree" id="tabHfFree" onclick="setMode('hffree')" title="Tạo trên Hugging Face Cloud Free ZeroGPU (0đ API)">🌐 Cloud Free (0đ)</button>
+      <button class="tab" id="tabTripoSR" onclick="setMode('triposr')" title="TripoSR Siêu tốc ~15 giây Offline">⚡ RTX Siêu Tốc</button>
+      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')" title="Meshy.ai Cloud (Yêu cầu có Credit Meshy)">✨ Meshy Pro</button>
+    </div>
 
     <!-- 1. IMAGE MODE CONTAINER -->
     <div id="imageBox">
       <!-- View mode switcher: Single vs Multi-view -->
       <div class="view-mode-bar">
-        <button class="view-tab active" id="vTabSingle" onclick="switchViewMode('single')">1️⃣ Ảnh Đơn</button>
-        <button class="view-tab" id="vTabMulti" onclick="switchViewMode('multi')">📸 4 Góc Nhìn</button>
-        <button class="slot-tip-btn" onclick="autoSplitGridImage()" title="Nạp 1 bức ảnh ghép 4 góc (2x2) để phần mềm tự động cắt và điền vào 4 ô" style="color:#a5b4fc;border-color:#6366f1;font-weight:700">🧩 Cắt 4 Ô</button>
-        <button class="slot-tip-btn" onclick="openPhotoGuide()" title="Xem bí quyết chụp ảnh để đạt độ hoàn hảo 100%" style="margin-left:auto;padding:3px 7px;border-radius:5px;font-size:10px">📋 Bí quyết</button>
+        <button class="view-tab active" id="vTabSingle" onclick="switchViewMode('single')">1️⃣ Ảnh Đơn (Nhanh)</button>
+        <button class="view-tab" id="vTabMulti" onclick="switchViewMode('multi')">📸 Đa Góc Nhìn (Chuẩn 360°)</button>
       </div>
 
       <!-- Single view drop -->
@@ -2181,9 +1951,6 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <div class="drop-hint" id="dropHint">
           <b>Chọn ảnh 2D từ máy tính</b>
           <p>Nhấn để nạp ảnh PNG / JPG / WebP</p>
-          <div style="margin-top:6px">
-            <span style="font-size:10.5px;color:#818cf8;text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();autoSplitGridImage()">Hoặc nạp ảnh ghép 4 góc (2x2) ➔</span>
-          </div>
         </div>
       </div>
 
@@ -2194,40 +1961,28 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         </button>
         <div class="mv-grid">
           <div class="mv-slot" onclick="pickMultiSlot('front')" id="slotBoxFront">
-            <div class="mv-slot-status">
-              <span class="mv-label required">Mặt Trước (Chính diện) *</span>
-              <span class="slot-loaded" id="loadedFront">✓ Đã nạp</span>
-            </div>
+            <span class="mv-label required">Mặt Trước (Chính diện) *</span>
             <div class="mv-drop" id="mvDropFront">
               <img id="mvPrevFront" alt="Front">
               <div class="mv-hint" id="mvHintFront"><b>+ Nạp ảnh trước</b></div>
             </div>
           </div>
           <div class="mv-slot" onclick="pickMultiSlot('back')" id="slotBoxBack">
-            <div class="mv-slot-status">
-              <span class="mv-label recommended">Mặt Sau (Lưng) ★</span>
-              <span class="slot-loaded" id="loadedBack">✓ Đã nạp</span>
-            </div>
+            <span class="mv-label recommended">Mặt Sau (Lưng) ★ Khuyên dùng</span>
             <div class="mv-drop" id="mvDropBack">
               <img id="mvPrevBack" alt="Back">
-              <div class="mv-hint" id="mvHintBack"><b>+ Nạp ảnh sau</b><p style="font-size:9px;color:#94a3b8;margin:2px 0 0">Khử 100% méo 360°</p></div>
+              <div class="mv-hint" id="mvHintBack"><b>+ Nạp ảnh sau lưng</b><p style="font-size:9px;color:#94a3b8;margin:2px 0 0">Khử 100% sai lệch lưng</p></div>
             </div>
           </div>
           <div class="mv-slot" onclick="pickMultiSlot('left')" id="slotBoxLeft">
-            <div class="mv-slot-status">
-              <span class="mv-label optional">Cạnh Trái</span>
-              <span class="slot-loaded" id="loadedLeft">✓ Đã nạp</span>
-            </div>
+            <span class="mv-label optional">Cạnh Trái (Tùy chọn)</span>
             <div class="mv-drop" id="mvDropLeft">
               <img id="mvPrevLeft" alt="Left">
               <div class="mv-hint" id="mvHintLeft"><b>+ Cạnh trái</b></div>
             </div>
           </div>
           <div class="mv-slot" onclick="pickMultiSlot('right')" id="slotBoxRight">
-            <div class="mv-slot-status">
-              <span class="mv-label optional">Cạnh Phải</span>
-              <span class="slot-loaded" id="loadedRight">✓ Đã nạp</span>
-            </div>
+            <span class="mv-label optional">Cạnh Phải (Tùy chọn)</span>
             <div class="mv-drop" id="mvDropRight">
               <img id="mvPrevRight" alt="Right">
               <div class="mv-hint" id="mvHintRight"><b>+ Cạnh phải</b></div>
@@ -2257,111 +2012,98 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       </div>
     </div>
 
-    <!-- ── BƯỚC 3: ĐỘNG CƠ AI ── -->
-    <div class="step-hdr"><div class="step-num">3</div><span>Động Cơ AI</span><div class="step-line"></div></div>
-
-    <!-- 4 Engine tabs: Local Offline + Free Cloud + Meshy Pro -->
-    <div class="tabs" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
-      <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')" title="NVIDIA RTX 3050 Offline 100% - Không tốn tiền, không giới hạn, Khớp 1:1">🐉 RTX Đẳng Cấp</button>
-      <button class="tab hffree" id="tabHfFree" onclick="setMode('hffree')" title="Tạo trên Hugging Face Cloud Free ZeroGPU (0đ API)">🌐 Cloud Free (0đ)</button>
-      <button class="tab" id="tabTripoSR" onclick="setMode('triposr')" title="TripoSR Siêu tốc ~15 giây Offline">⚡ RTX Siêu Tốc</button>
-      <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')" title="Meshy.ai Cloud (Yêu cầu có Credit Meshy)">✨ Meshy Pro</button>
-    </div>
-
     <!-- Info card -->
     <div class="info-card">
       <span class="ic-title" id="icTitle">🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo (Offline 100%)</span>
-      <span class="ic-desc" id="icDesc">Kiến trúc DiT Flow Matching + Động cơ UV Dual-View mới: <b>Khớp chuẩn 1:1 khuôn mặt & chi tiết</b>, hoàn toàn miễn phí không giới hạn.</span>
+      <span class="ic-desc" id="icDesc">Kiến trúc DiT Flow Matching + Động cơ UV Dual-View mới: <b>Khớp chuẩn 1:1 khuôn mặt & chi tiết, tự động khử loang lổ 360° mặt sau</b>, hoàn toàn miễn phí không giới hạn.</span>
     </div>
 
     <!-- Hugging Face Free Cloud Settings -->
     <div id="hffreeSet" style="display:none">
-      <div onclick="toggleAdv('advHF')" class="adv-toggle" id="advTogHF"><span class="arr">▶</span> Tùy chỉnh Cloud Free</div>
-      <div class="adv-body" id="advHF">
-        <div style="font-size:11px;color:#cbd5e1;background:#0d111a;padding:7px 9px;border-radius:6px;border:1px solid #1e2638;display:flex;align-items:center;justify-content:space-between">
+      <div class="sg" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <label>Hugging Face Token (Tùy chọn - Miễn phí 0đ):</label>
+          <button class="tag-btn" onclick="openHfTokenModal()" style="font-size:10px;padding:2px 7px">🌐 Cài Token</button>
+        </div>
+        <div id="hfTokenStatusBox" style="font-size:11px;color:#cbd5e1;background:#0d111a;padding:7px 9px;border-radius:6px;border:1px solid #1e2638;display:flex;align-items:center;justify-content:space-between">
           <span id="hfTokenLabel">Chưa cấu hình Token (Đang dùng Quota công cộng)</span>
           <button class="tag-btn" onclick="openHfTokenModal()" id="btnSetHfToken" style="font-size:10px;padding:2px 6px">Cài đặt</button>
         </div>
-        <div class="sg">
-          <label>Độ sắc nét hình khối Cloud:</label>
-          <select id="hfSteps">
-            <option value="15" selected>🚀 15 bước Flow Matching (~25s) – Nhanh & nét</option>
-            <option value="25">💎 25 bước Chi tiết cao (~40s) – Mịn màng</option>
-            <option value="10">⚡ 10 bước Siêu tốc (~15s)</option>
-          </select>
+        <div style="font-size:10px;color:#94a3b8;margin-top:4px">
+          💡 <i>Token Hugging Face 100% MIỄN PHÍ. Nhập token giúp bạn có hàng đợi ưu tiên không lo hết hạn mức!</i>
         </div>
+      </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Độ sắc nét hình khối Cloud:</label>
+        <select id="hfSteps">
+          <option value="15" selected>🚀 15 bước Flow Matching (~25s) – Sắc nét & Nhanh</option>
+          <option value="25">💎 25 bước Chi tiết cao (~40s) – Mịn màng</option>
+          <option value="10">⚡ 10 bước Siêu tốc (~15s)</option>
+        </select>
+      </div>
+      <div class="chk-row" style="margin-bottom:6px">
+        <input type="checkbox" id="chkHfPbr" checked disabled>
+        <label class="chk-row" for="chkHfPbr">🎨 Tự động nướng vân PBR 8K Ultra-HD 1:1 (Đã tích hợp)</label>
       </div>
     </div>
 
     <!-- Meshy.ai Cloud Settings -->
     <div id="meshySet" style="display:none">
-      <div onclick="toggleAdv('advMeshy')" class="adv-toggle" id="advTogMeshy"><span class="arr">▶</span> Cài đặt Meshy Cloud</div>
-      <div class="adv-body" id="advMeshy">
-        <div style="font-size:11px;color:#cbd5e1;background:#0d111a;padding:7px 9px;border-radius:6px;border:1px solid #1e2638;display:flex;align-items:center;justify-content:space-between">
+      <div class="sg" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <label>Khóa Meshy API Key:</label>
+          <button class="tag-btn" onclick="openMeshyKeyModal()" style="font-size:10px;padding:2px 7px">🔑 Đổi Key</button>
+        </div>
+        <div id="meshyKeyStatusBox" style="font-size:11px;color:#cbd5e1;background:#0d111a;padding:7px 9px;border-radius:6px;border:1px solid #1e2638;display:flex;align-items:center;justify-content:space-between">
           <span id="meshyKeyLabel">Chưa cấu hình API Key</span>
           <button class="tag-btn" onclick="openMeshyKeyModal()" id="btnSetMeshyKey" style="font-size:10px;padding:2px 6px">Cài đặt</button>
         </div>
+      </div>
+      <div class="chk-row" style="margin-bottom:6px">
+        <input type="checkbox" id="chkMeshyPbr" checked>
+        <label class="chk-row" for="chkMeshyPbr">💎 Vật liệu PBR HD (Độ bóng kim loại, phản quang chân thực 360°)</label>
       </div>
     </div>
 
     <!-- Hunyuan3D Turbo Settings -->
     <div id="turboSet">
-      <div onclick="toggleAdv('advTurbo')" class="adv-toggle" id="advTogTurbo"><span class="arr">▶</span> Tùy chỉnh nâng cao RTX</div>
-      <div class="adv-body" id="advTurbo">
-        <div class="sg">
-          <label>Số bước suy luận Flow Matching (RTX 3050):</label>
-          <select id="turboSteps">
-            <option value="10" selected>🚀 10 bước Turbo (~35s) – Mịn màng, cân đối (Khuyên dùng)</option>
-            <option value="15">💎 15 bước Ultra (~50s) – Chi tiết cao</option>
-            <option value="8">⚡ 8 bước Fast (~25s) – Xem nhanh</option>
-          </select>
-        </div>
-        <div class="sg">
-          <label>Độ phân giải không gian Octree:</label>
-          <select id="turboOctree">
-            <option value="160" selected>⚡ 160 Octree (~1 phút) – Cực nhanh, nhẹ cho Game</option>
-            <option value="192">🚀 192 Octree (~2 phút) – Cân bằng sắc nét (Khuyên dùng)</option>
-            <option value="256">💎 256 Octree (~6-8 phút) – Siêu chi tiết, lưới dày</option>
-          </select>
-        </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Số bước suy luận Flow Matching (RTX 3050):</label>
+        <select id="turboSteps">
+          <option value="15" selected>🚀 15 bước Ultra (~38s) – Cân đối độ nét và tốc độ (Khuyên dùng)</option>
+          <option value="20">🌟 20 bước Nâng cao (~50s) – Tăng nét & bề mặt mịn</option>
+          <option value="25">💎 25 bước Siêu chi tiết (~65s) – Cấu trúc phức tạp cao</option>
+          <option value="30">👑 30 bước Tối thượng (~85s) – Khử 100% rỗng móp, siêu mịn kín</option>
+          <option value="10">⚡ 10 bước Turbo (~25s) – Tiêu chuẩn nhanh</option>
+          <option value="8">⏱ 8 bước Fast (~15s) – Xem nhanh</option>
+        </select>
+      </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Độ phân giải không gian Octree:</label>
+        <select id="turboOctree">
+          <option value="256" selected>💎 256 Octree (~2-3 phút) – Chuẩn Studio Siêu nét (Khuyên dùng)</option>
+          <option value="512">👑 512 Octree (Lưới Siêu Dày & Cực Nét - Cần GPU 6GB+)</option>
+          <option value="384">🌟 384 Octree (~4 phút) – Chi tiết cao & An toàn VRAM</option>
+          <option value="192">🚀 192 Octree (~1.5 phút) – Cân bằng sắc nét & tốc độ</option>
+          <option value="160">⚡ 160 Octree (~50s) – Chuẩn nhẹ cho Game & Rigging</option>
+        </select>
       </div>
     </div>
 
     <!-- TripoSR Fast Settings -->
     <div id="triposrSet" style="display:none">
-      <div onclick="toggleAdv('advTripo')" class="adv-toggle" id="advTogTripo"><span class="arr">▶</span> Tùy chỉnh TripoSR</div>
-      <div class="adv-body" id="advTripo">
-        <div class="sg">
-          <label>Chất lượng hình học TripoSR:</label>
-          <select id="quality">
-            <option value="pbr_1024" selected>💎 Nướng vân PBR 8K + Taubin (~15s)</option>
-            <option value="ultra_320">📐 Ultra HD 320 (~10s) – 43.000 điểm lưới</option>
-            <option value="fast_256">⚡ Siêu tốc Vertex Colors 256 (~3s)</option>
-          </select>
-        </div>
-        <div class="chk-row">
-          <input type="checkbox" id="chkSmooth" checked>
-          <label class="chk-row" for="chkSmooth">✨ Làm mịn Taubin</label>
-        </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Chất lượng hình học TripoSR:</label>
+        <select id="quality">
+          <option value="pbr_1024" selected>💎 Nướng vân PBR 8K Ultra-HD + Làm mịn Taubin (~15s)</option>
+          <option value="ultra_320">📐 Ultra HD 320 (~10s) – 43.000 điểm lưới</option>
+          <option value="fast_256">⚡ Siêu tốc Vertex Colors 256 (~3s)</option>
+        </select>
       </div>
-    </div>
-
-    <!-- ── BƯỚC 4: SỬA MESH & BẮT ĐẦU TẠO ── -->
-    <div class="step-hdr"><div class="step-num">4</div><span>Sửa Lỗi & Tạo 3D</span><div class="step-line"></div></div>
-
-    <!-- v2.2.0 Part B: Mesh Repair & Smooth Control -->
-    <div class="pp-row">
-      <span class="pp-icon">🔧</span>
-      <div class="pp-info">
-        <span class="pp-title">Tự Động Sửa Lỗi Mesh (v2.2.0)</span>
-        <span class="pp-sub">Vá lỗ, xóa mảnh vụn, sửa pháp tuyến & làm mịn</span>
+      <div class="chk-row" style="margin-bottom:6px">
+        <input type="checkbox" id="chkSmooth" checked>
+        <label class="chk-row" for="chkSmooth">✨ Làm mịn Taubin (khử bậc thang, giữ thể tích)</label>
       </div>
-      <select class="pp-select" id="selSmoothLevel" title="Mức độ sửa mesh và làm mịn">
-        <option value="strong">💎 Mịn cao</option>
-        <option value="medium" selected>🚀 Mịn vừa ✓</option>
-        <option value="light">⚡ Mịn nhẹ</option>
-        <option value="off">Tắt</option>
-      </select>
     </div>
 
     <button class="btn-gen" id="btnGen" onclick="generate()">
@@ -2387,8 +2129,8 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <!-- Lighting Presets -->
       <div class="tool-group">
         <span class="tool-label">💡 Ánh sáng:</span>
-        <button class="light-btn active" id="lbtnStudio" onclick="setLighting('studio')">✨ Chân thực (Ảnh gốc)</button>
-        <button class="light-btn" id="lbtnCinema" onclick="setLighting('aces')">🎬 Cinema ACES</button>
+        <button class="light-btn" id="lbtnStudio" onclick="setLighting('studio')">✨ Chân thực (Ảnh gốc)</button>
+        <button class="light-btn active" id="lbtnCinema" onclick="setLighting('aces')">🎬 Cinema ACES</button>
         <button class="light-btn" id="lbtnSoft" onclick="setLighting('soft')">☀️ Dịu mắt</button>
       </div>
 
@@ -2406,23 +2148,14 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <button class="btn-act ready" id="btnGlb" onclick="doExport('glb')" title="Lưu định dạng GLB">
           📦 Lưu GLB
         </button>
+        <button class="btn-act ready" id="btnEnhance4k" onclick="doEnhance4k()" title="Nâng cấp Texture lên 4K bằng Real-ESRGAN & Phục hồi khuôn mặt sắc nét" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:#a855f7">
+          ✨ Nâng Cấp Texture 4K (AI)
+        </button>
         <button class="btn-act ready" id="btnObj" onclick="doExport('obj')" title="Lưu định dạng OBJ cho Blender/Maya">
           📦 Lưu OBJ
         </button>
         <button class="btn-act ready" id="btnDir" onclick="openDir()" title="Mở thư mục chứa file đã tạo">
           📁 Mở thư mục
-        </button>
-        <button class="btn-wire" id="btnWire" onclick="toggleWireframe()" title="Bật/tắt lưới Wireframe để kiểm tra topology">
-          🔲 Wireframe
-        </button>
-        <button class="btn-wire" id="btnMat" onclick="toggleMatPanel()" title="Chỉnh vật liệu PBR: Metallic, Roughness, Exposure">
-          🎛️ Vật liệu
-        </button>
-        <button class="btn-wire" id="btnStats" onclick="toggleStats()" title="Thông tin polygon, kích thước mô hình">
-          📊 Thống kê
-        </button>
-        <button class="btn-wire" id="btnEnhanceTex" onclick="doEnhanceTexture4K()" style="background:linear-gradient(135deg,#064e3b,#059669);color:#6ee7b7;border-color:#10b981;font-weight:700" title="Dùng Real-ESRGAN nâng cấp Texture lên 4K và khôi phục sắc nét vùng khuôn mặt">
-          ✨ Nét 4K + Mặt
         </button>
         <button class="btn-act ready" id="btnMixamo" onclick="openMixamoModal()" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border-color:#f59e0b" title="Gắn khung xương tự động và tạo động tác Game qua Mixamo">
           🦴 Gắn Xương (Mixamo)
@@ -2430,85 +2163,8 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       </div>
     </div>
 
-    <!-- v2.1.9: Model Stats Bar -->
-    <div class="stats-bar" id="statsBar">
-      <span class="stat-item">🔺 Faces: <span class="stat-val" id="sFaces">—</span></span>
-      <span class="stat-sep">|</span>
-      <span class="stat-item">⚪ Vertices: <span class="stat-val" id="sVerts">—</span></span>
-      <span class="stat-sep">|</span>
-      <span class="stat-item">📐 Size: <span class="stat-val" id="sSize">—</span></span>
-      <span class="stat-sep">|</span>
-      <span class="stat-item">💾 <span class="stat-val" id="sFile">—</span> MB</span>
-      <span class="stat-sep">|</span>
-      <span class="stat-item" id="sWatertight"></span>
-    </div>
-
     <!-- Viewport -->
-    <div class="vp" style="position:relative">
-
-      <!-- v2.1.9: Material Editor Panel (floating) -->
-      <div class="mat-panel" id="matPanel">
-        <div class="mat-title">🎛️ Vật liệu PBR <button class="mat-x" onclick="toggleMatPanel()">✕</button></div>
-        <div class="mat-row">
-          <label class="mat-label">Exposure <span id="lblExp">1.05</span></label>
-          <input type="range" class="mat-slider" id="slExp" min="0.3" max="3.0" step="0.05" value="1.05" oninput="applyMat()">
-        </div>
-        <div class="mat-row">
-          <label class="mat-label">Shadow Intensity <span id="lblShadow">1.2</span></label>
-          <input type="range" class="mat-slider" id="slShadow" min="0" max="3" step="0.1" value="1.2" oninput="applyMat()">
-        </div>
-        <div class="mat-row">
-          <label class="mat-label">Tone Mapping</label>
-          <select id="selTone" style="background:#0a0e1a;border:1px solid #253147;color:#e2e8f0;padding:5px;border-radius:6px;font-size:11px;outline:none" onchange="applyMat()">
-            <option value="aces" selected>ACES Cinema</option>
-            <option value="commerce">Commerce (Sản phẩm)</option>
-            <option value="neutral">Neutral</option>
-            <option value="agx">AGX</option>
-          </select>
-        </div>
-        <div class="mat-row">
-          <label class="mat-label">Auto-rotate</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" id="chkAutoRot" checked onchange="applyMat()" style="cursor:pointer">
-            <span style="font-size:11px;color:#cbd5e1">Bật xoay tự động</span>
-          </div>
-        </div>
-        <div class="mat-row">
-          <label class="mat-label">Environment</label>
-          <select id="selEnv" style="background:#0a0e1a;border:1px solid #253147;color:#e2e8f0;padding:5px;border-radius:6px;font-size:11px;outline:none" onchange="applyMat()">
-            <option value="" selected>Mặc định Studio</option>
-            <option value="neutral">Neutral Gray</option>
-            <option value="legacy">Ánh sáng Phòng</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- v2.1.9: Multi-view Preview Dock -->
-      <div class="mv-dock" id="mvDock">
-        <span style="font-size:10px;color:#64748b;writing-mode:vertical-lr;transform:rotate(180deg);flex-shrink:0">5 GÓC</span>
-        <div class="mv-dock-card active" id="dockFront" onclick="setDockView('front',0,0)">
-          <img class="mv-dock-img" id="dockImgFront" alt="Front">
-          <span class="mv-dock-lbl">Trước</span>
-        </div>
-        <div class="mv-dock-card" id="dockBack" onclick="setDockView('back',180,0)">
-          <img class="mv-dock-img" id="dockImgBack" alt="Back">
-          <span class="mv-dock-lbl">Sau</span>
-        </div>
-        <div class="mv-dock-card" id="dockLeft" onclick="setDockView('left',90,0)">
-          <img class="mv-dock-img" id="dockImgLeft" alt="Left">
-          <span class="mv-dock-lbl">Trái</span>
-        </div>
-        <div class="mv-dock-card" id="dockRight" onclick="setDockView('right',-90,0)">
-          <img class="mv-dock-img" id="dockImgRight" alt="Right">
-          <span class="mv-dock-lbl">Phải</span>
-        </div>
-        <div class="mv-dock-card" id="dockTop" onclick="setDockView('top',0,90)">
-          <img class="mv-dock-img" id="dockImgTop" alt="Top">
-          <span class="mv-dock-lbl">Trên</span>
-        </div>
-        <button class="mv-dock-toggle" onclick="closeMvDock()">✕</button>
-      </div>
-
+    <div class="vp">
       <model-viewer id="mv"
         camera-controls
         auto-rotate
@@ -2729,75 +2385,6 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
   </div>
 </div>
 
-<!-- v2.2.0 Photo Guidance Modal -->
-<div class="modal-bg" id="mPhotoGuide">
-  <div class="modal" style="width:720px; max-height:88vh; display:flex; flex-direction:column">
-    <div class="m-hdr">
-      <span class="m-title" style="color:#38bdf8;display:flex;align-items:center;gap:7px">
-        📸 Bí Quyết Chụp Ảnh Để Tạo 3D Chuẩn 100% Không Lỗi (v2.2.0)
-      </span>
-      <button class="m-x" onclick="closePhotoGuide()">✕</button>
-    </div>
-    <div style="font-size:12px;color:#cbd5e1;line-height:1.6;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px">
-      <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:12px">
-        <h4 style="color:#f59e0b;margin:0 0 6px 0;font-size:12.5px">⚠️ Vì sao 1 ảnh đơn dễ bị lỗi (lõm, thiếu đế, dính nan)?</h4>
-        <p style="margin:0;font-size:11px;color:#94a3b8">Khi chỉ có 1 ảnh 2D, AI phải <b>tự đoán 100% chiều sâu Z</b> và mặt sau. Đối với đồ vật có lỗ hổng (lưới quạt, nan xe, lưng ghế), AI dễ nhầm lẫn giữa bóng tối và lỗ thủng. Dùng <b>4 Góc Nhìn (Chuẩn 360°)</b> giải quyết triệt để 100% vấn đề này!</p>
-      </div>
-
-      <div class="guide-slots">
-        <div class="guide-slot">
-          <div class="guide-slot-hdr" style="color:#60a5fa">📷 1. Mặt Trước (Chính diện)</div>
-          <div class="guide-slot-tip">Đặt máy ngang tầm mắt vật thể, chụp thẳng trực diện. Thấy rõ chân đế, thân và mặt trước.</div>
-          <div class="guide-example">
-            <div class="guide-ex-card guide-ex-good">✓ Thẳng ngang tầm</div>
-            <div class="guide-ex-card guide-ex-bad">✗ Chụp từ trên chúc xuống</div>
-          </div>
-        </div>
-
-        <div class="guide-slot">
-          <div class="guide-slot-hdr" style="color:#34d399">📷 2. Mặt Sau (Lưng vật thể) ★</div>
-          <div class="guide-slot-tip"><b>Quan trọng nhất!</b> Giúp AI biết chính xác lưng quạt lồi ra sao, xóa sạch lỗi méo và sai lệch 360°.</div>
-          <div class="guide-example">
-            <div class="guide-ex-card guide-ex-good">✓ Đủ ánh sáng mặt lưng</div>
-            <div class="guide-ex-card guide-ex-bad">✗ Lưng quá tối / bóng đổ</div>
-          </div>
-        </div>
-
-        <div class="guide-slot">
-          <div class="guide-slot-hdr" style="color:#a78bfa">📷 3. Cạnh Trái (Góc 90°)</div>
-          <div class="guide-slot-tip">Chụp cạnh bên giúp AI xác định chính xác độ dày của lồng quạt, độ nghiêng của chân đế.</div>
-          <div class="guide-example">
-            <div class="guide-ex-card guide-ex-good">✓ Thấy rõ bề dày</div>
-            <div class="guide-ex-card guide-ex-bad">✗ Góc chéo nửa vời</div>
-          </div>
-        </div>
-
-        <div class="guide-slot">
-          <div class="guide-slot-hdr" style="color:#f472b6">📷 4. Cạnh Phải (Góc -90°)</div>
-          <div class="guide-slot-tip">Bổ sung góc nhìn đối xứng, hoàn thiện khung xương 3D và tay cầm/núm điều khiển.</div>
-          <div class="guide-example">
-            <div class="guide-ex-card guide-ex-good">✓ Đủ chi tiết núm/chốt</div>
-            <div class="guide-ex-card guide-ex-bad">✗ Bị che khuất</div>
-          </div>
-        </div>
-      </div>
-
-      <div style="background:#0a101d;border:1px solid #1e3a5f;border-radius:8px;padding:12px">
-        <h4 style="color:#38bdf8;margin:0 0 6px 0;font-size:12.5px">💡 4 Mẹo Vàng Khi Chụp Bằng Điện Thoại</h4>
-        <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;font-size:11px">
-          <li><b>Nền đơn sắc</b>: Đặt vật thể trên bàn trắng hoặc nền trơn để tách nền sạch 100%.</li>
-          <li><b>Giữ cố định vật thể</b>: Để vật thể đứng yên, người chụp cầm điện thoại đi vòng quanh chụp 4 góc.</li>
-          <li><b>Ánh sáng chan hòa</b>: Bật đèn phòng hoặc chụp gần cửa sổ, tránh bóng đổ quá đậm che khuất chi tiết.</li>
-          <li><b>Kích hoạt Sửa Mesh</b>: Luôn chọn chế độ "🔧 Tự Động Sửa Lỗi Mesh: Mịn vừa" ở Bước 4 trước khi bấm Tạo 3D!</li>
-        </ul>
-      </div>
-    </div>
-    <div class="m-foot" style="margin-top:10px">
-      <button class="btn-m btn-m-pri" onclick="closePhotoGuide()" style="background:#2563eb">Đã hiểu, Bắt đầu chụp ảnh chuẩn!</button>
-    </div>
-  </div>
-</div>
-
 <script>
 let curSource = 'image';
 let curMode = 'turbo';
@@ -2811,12 +2398,6 @@ let _hasMeshyKey = false;
 let _maskedMeshyKey = '';
 let _hasHfToken = false;
 let _maskedHfToken = '';
-
-/* ── v2.1.9 State ── */
-let _wireframeOn = false;
-let _matPanelOpen = false;
-let _statsOpen = false;
-let _mvDockOpen = false;
 
 /* ── Progress helper exposed to Python ── */
 window._setProgress = function(msg, pct) {
@@ -2881,120 +2462,17 @@ window.addEventListener('pywebviewready', async () => {
   }
 });
 
-/* ── v2.1.9: Central model display helper ── */
-function showModelInViewer(glbData, folder) {
-  const mv = document.getElementById('mv');
-  mv.src = glbData;
-  mv.style.display = 'block';
-  document.getElementById('empty').style.display = 'none';
-  document.getElementById('hint').style.display = 'block';
-  if (folder) lastFolder = folder;
-  // Auto-load stats
-  setTimeout(() => fetchModelStats(), 600);
-}
-
-/* ── v2.1.9: Wireframe toggle ── */
-function toggleWireframe() {
-  _wireframeOn = !_wireframeOn;
-  const mv = document.getElementById('mv');
-  const btn = document.getElementById('btnWire');
-  if (mv && mv.model) {
-    try {
-      mv.model.materials.forEach(mat => {
-        mat.setAlphaMode(_wireframeOn ? 'BLEND' : 'OPAQUE');
-      });
-    } catch(e) {}
-  }
-  // model-viewer doesn't natively support wireframe; we simulate via CSS filter
-  mv.style.filter = _wireframeOn ? 'invert(1) hue-rotate(180deg) brightness(0.6)' : '';
-  if (btn) btn.classList.toggle('active', _wireframeOn);
-  window._setProgress(_wireframeOn ? '🔲 Wireframe BẬT – Đang xem lưới topology' : '🔲 Wireframe TẮT – Trở về chế độ thường', -1);
-}
-
-/* ── v2.1.9: Material editor panel ── */
-function toggleMatPanel() {
-  _matPanelOpen = !_matPanelOpen;
-  const p = document.getElementById('matPanel');
-  const btn = document.getElementById('btnMat');
-  if (p) p.classList.toggle('open', _matPanelOpen);
-  if (btn) btn.classList.toggle('active', _matPanelOpen);
-}
-
-function applyMat() {
-  const mv = document.getElementById('mv');
-  if (!mv) return;
-  const exp = parseFloat(document.getElementById('slExp').value);
-  const shadow = parseFloat(document.getElementById('slShadow').value);
-  const tone = document.getElementById('selTone').value;
-  const autoRot = document.getElementById('chkAutoRot').checked;
-  const env = document.getElementById('selEnv').value;
-  document.getElementById('lblExp').textContent = exp.toFixed(2);
-  document.getElementById('lblShadow').textContent = shadow.toFixed(1);
-  mv.setAttribute('exposure', exp);
-  mv.setAttribute('shadow-intensity', shadow);
-  mv.setAttribute('tone-mapping', tone);
-  if (autoRot) { mv.setAttribute('auto-rotate', ''); } else { mv.removeAttribute('auto-rotate'); }
-  if (env) { mv.setAttribute('skybox-image', env); } else { mv.removeAttribute('skybox-image'); }
-}
-
-/* ── v2.1.9: Model stats ── */
-async function fetchModelStats() {
-  try {
-    const r = await window.pywebview.api.get_model_stats();
-    if (r && r.success) {
-      document.getElementById('sFaces').textContent = r.faces.toLocaleString();
-      document.getElementById('sVerts').textContent = r.vertices.toLocaleString();
-      document.getElementById('sSize').textContent = `${r.bbox_x.toFixed(2)} × ${r.bbox_y.toFixed(2)} × ${r.bbox_z.toFixed(2)}`;
-      document.getElementById('sFile').textContent = r.glb_size_mb;
-      const wt = document.getElementById('sWatertight');
-      wt.innerHTML = r.is_watertight
-        ? '<span style="color:#34d399">✓ Watertight</span>'
-        : '<span style="color:#f87171">✗ Non-watertight</span>';
-    }
-  } catch(e) {}
-}
-
-function toggleStats() {
-  _statsOpen = !_statsOpen;
-  const bar = document.getElementById('statsBar');
-  const btn = document.getElementById('btnStats');
-  if (bar) bar.classList.toggle('visible', _statsOpen);
-  if (btn) btn.classList.toggle('active', _statsOpen);
-  if (_statsOpen) fetchModelStats();
-}
-
-/* ── v2.1.9: Multi-view dock ── */
-function closeMvDock() {
-  _mvDockOpen = false;
-  const d = document.getElementById('mvDock');
-  if (d) d.classList.remove('open');
-}
-
-function openMvDock() {
-  _mvDockOpen = true;
-  const d = document.getElementById('mvDock');
-  if (d) d.classList.add('open');
-}
-
-function setDockView(name, yawDeg, pitchDeg) {
-  const mv = document.getElementById('mv');
-  if (mv) {
-    try {
-      mv.cameraOrbit = `${yawDeg}deg ${90 - pitchDeg}deg auto`;
-      mv.jumpCameraToGoal();
-    } catch(e) {}
-  }
-  document.querySelectorAll('.mv-dock-card').forEach(c => c.classList.remove('active'));
-  const card = document.getElementById('dock' + name.charAt(0).toUpperCase() + name.slice(1));
-  if (card) card.classList.add('active');
-}
-
 /* ── View latest model from previous session ── */
 async function loadLastModel() {
   window._setProgress('Đang nạp lại mô hình từ phiên trước…', 30);
   const r = await window.pywebview.api.load_latest_model();
   if (r && r.success) {
-    showModelInViewer(r.glb_data, r.folder);
+    lastFolder = r.folder;
+    const mv = document.getElementById('mv');
+    mv.src = r.glb_data;
+    mv.style.display = 'block';
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('hint').style.display = 'block';
     window._setProgress('✨ Đã nạp lại mô hình 3D từ phiên trước!', 100);
   } else {
     window._setProgress('❌ ' + ((r && r.error) ? r.error : 'Không thể nạp mô hình'), -1);
@@ -3086,100 +2564,14 @@ async function pickMultiSlot(slot) {
     const cap = slot.charAt(0).toUpperCase() + slot.slice(1);
     const p = document.getElementById('mvPrev' + cap);
     const h = document.getElementById('mvHint' + cap);
-    const lblLoaded = document.getElementById('loaded' + cap);
     if (p) {
       p.src = r.dataUrl;
       p.style.display = 'block';
     }
     if (h) h.style.display = 'none';
-    if (lblLoaded) lblLoaded.classList.add('show');
     window._setProgress('✓ Đã nạp ' + (slotNameMap[slot] || slot) + ': ' + r.name, -1);
   } else {
     window._setProgress('Chưa chọn ảnh cho ' + (slotNameMap[slot] || slot) + '.', -1);
-  }
-}
-
-/* ── v2.2.0: Photo Guidance Modal helpers ── */
-function openPhotoGuide() {
-  const m = document.getElementById('mPhotoGuide');
-  if (m) m.style.display = 'flex';
-}
-
-function closePhotoGuide() {
-  const m = document.getElementById('mPhotoGuide');
-  if (m) m.style.display = 'none';
-}
-
-/* ── v2.2.0: Collapsible advanced settings ── */
-function toggleAdv(id) {
-  const el = document.getElementById(id);
-  const tog = document.getElementById(id.replace('adv', 'advTog'));
-  if (el) {
-    const isOpen = el.classList.toggle('open');
-    if (tog) tog.classList.toggle('open', isOpen);
-  }
-}
-
-/* ── v2.2.1: Auto slice 4-view grid image ── */
-async function autoSplitGridImage() {
-  window._setProgress('Đang mở hộp thoại chọn ảnh ghép 4 ô (2x2)…', -1);
-  const r = await window.pywebview.api.split_and_load_grid_image();
-  if (r && r.success && r.slots) {
-    switchViewMode('multi');
-    for (const [slot, data] of Object.entries(r.slots)) {
-      multiImgs[slot] = data.path;
-      if (slot === 'front') {
-        imgPath = data.path;
-        const prevSingle = document.getElementById('prev');
-        const dropHint = document.getElementById('dropHint');
-        if (prevSingle) {
-          prevSingle.src = data.dataUrl;
-          prevSingle.style.display = 'block';
-        }
-        if (dropHint) dropHint.style.display = 'none';
-      }
-      const cap = slot.charAt(0).toUpperCase() + slot.slice(1);
-      const p = document.getElementById('mvPrev' + cap);
-      const h = document.getElementById('mvHint' + cap);
-      const lblLoaded = document.getElementById('loaded' + cap);
-      if (p) {
-        p.src = data.dataUrl;
-        p.style.display = 'block';
-      }
-      if (h) h.style.display = 'none';
-      if (lblLoaded) lblLoaded.classList.add('show');
-    }
-    window._setProgress('✅ Đã tự động cắt sạch và nạp đủ 4 góc (Trước, Sau, Trái, Phải)! Sẵn sàng tạo 3D.', 100);
-  } else if (r && r.error) {
-    window._setProgress('❌ Lỗi cắt ảnh: ' + r.error, -1);
-  } else {
-    window._setProgress('Chưa chọn ảnh ghép.', -1);
-  }
-}
-
-/* ── Real-ESRGAN 4K Texture & Face Restoration ── */
-async function doEnhanceTexture4K() {
-  if (!lastFolder) {
-    window._setProgress('⚠️ Hãy tạo hoặc nạp một mô hình 3D trước!', -1);
-    return;
-  }
-  const btn = document.getElementById('btnEnhanceTex');
-  if (btn) btn.disabled = true;
-  window._setProgress('🚀 Đang khởi động Real-ESRGAN: Nâng cấp Texture 4K & phục hồi nét mặt…', 10);
-  try {
-    const r = await window.pywebview.api.enhance_texture_4k(lastFolder);
-    if (r && r.success) {
-      if (r.glb_data) {
-        showModelInViewer(r.glb_data, r.folder);
-      }
-      window._setProgress('✅ Đã nâng cấp Texture 4K (' + (r.resolution || '4096x4096') + ') & khôi phục sắc nét khuôn mặt!', 100);
-    } else {
-      window._setProgress('❌ Lỗi nâng cấp texture: ' + ((r && r.error) ? r.error : 'Không xác định'), -1);
-    }
-  } catch (e) {
-    window._setProgress('❌ Lỗi: ' + e, -1);
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -3435,13 +2827,11 @@ async function pickImage() {
 
     const pF = document.getElementById('mvPrevFront');
     const hF = document.getElementById('mvHintFront');
-    const lblFront = document.getElementById('loadedFront');
     if (pF) {
       pF.src = r.dataUrl;
       pF.style.display = 'block';
     }
     if (hF) hF.style.display = 'none';
-    if (lblFront) lblFront.classList.add('show');
 
     window._setProgress('Đã chọn: ' + r.name + ' – Nhấn nút Bắt đầu tạo 3D!', -1);
   } else {
@@ -3450,10 +2840,61 @@ async function pickImage() {
 }
 
 /* ── generate (Non-blocking async task with 400ms polling) ── */
+async function autoSplitGridImage() {
+  window._setProgress('Đang mở hộp thoại chọn ảnh ghép 4 góc…', -1);
+  const res = await window.pywebview.api.split_and_load_grid_image();
+  if (!res || !res.success) {
+    if (res && res.error) window._setProgress('❌ ' + res.error, -1);
+    return;
+  }
+  const slots = res.slots;
+  for (const [slot, sdata] of Object.entries(slots)) {
+    multiImgs[slot] = sdata.path;
+    const cap = slot.charAt(0).toUpperCase() + slot.slice(1);
+    const p = document.getElementById('mvPrev' + cap);
+    const h = document.getElementById('mvHint' + cap);
+    if (p) { p.src = sdata.dataUrl; p.style.display = 'block'; }
+    if (h) h.style.display = 'none';
+  }
+  if (slots.front) {
+    imgPath = slots.front.path;
+    document.getElementById('prev').src = slots.front.dataUrl;
+    document.getElementById('prev').style.display = 'block';
+    document.getElementById('dropHint').style.display = 'none';
+  }
+  window._setProgress('✅ Đã tự động cắt và nạp đủ 4 góc nhìn! Bấm Bắt đầu tạo 3D.', -1);
+}
+
+async function doEnhance4k() {
+  const mv = document.getElementById('mv');
+  if (!mv || mv.style.display === 'none') {
+    window._setProgress('⚠️ Hãy tạo hoặc nạp mô hình 3D trước khi nâng cấp Texture 4K!', -1);
+    return;
+  }
+  const btn = document.getElementById('btnEnhance4k');
+  if (btn) btn.disabled = true;
+  window._setProgress('🚀 Đang khởi động Real-ESRGAN 4K & Face Restoration…', 10);
+  try {
+    const res = await window.pywebview.api.enhance_texture_4k();
+    if (res && res.success) {
+      if (res.glb_data) {
+        mv.src = res.glb_data;
+        lastGlbData = res.glb_data;
+      }
+      window._setProgress(`✅ Đã nâng cấp Texture lên 4K (${res.resolution || '4096x4096'}) & Khôi phục nét hoàn tất!`, 100);
+    } else {
+      window._setProgress('❌ Lỗi nâng cấp Texture: ' + (res ? res.error : 'Không rõ'), -1);
+    }
+  } catch (e) {
+    window._setProgress('❌ Lỗi nâng cấp: ' + e, -1);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function generate() {
   const quality = document.getElementById('quality').value;
   const smooth = document.getElementById('chkSmooth').checked;
-  const smoothLevel = document.getElementById('selSmoothLevel') ? document.getElementById('selSmoothLevel').value : 'medium';
   let numSteps = document.getElementById('turboSteps').value;
   let octreeRes = document.getElementById('turboOctree').value;
   if (curMode === 'hffree') {
@@ -3515,8 +2956,8 @@ async function generate() {
   try {
     const prompt = (curSource === 'text') ? document.getElementById('promptInput').value.trim() : '';
     const startRes = (curSource === 'text')
-      ? await window.pywebview.api.start_generate_from_text(prompt, curMode, quality, smooth, numSteps, octreeRes, curStyle, smoothLevel)
-      : await window.pywebview.api.start_generate_3d(targetImg, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality, numSteps, octreeRes, backImg, leftImg, rightImg, curStyle, smoothLevel);
+      ? await window.pywebview.api.start_generate_from_text(prompt, curMode, quality, smooth, numSteps, octreeRes, curStyle)
+      : await window.pywebview.api.start_generate_3d(targetImg, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality, numSteps, octreeRes, backImg, leftImg, rightImg, curStyle);
 
     if (!startRes || !startRes.task_id) {
       window._setProgress('❌ Không thể khởi tạo tác vụ: ' + (startRes && startRes.error ? startRes.error : 'Lỗi không xác định'), -1);
@@ -3539,7 +2980,12 @@ async function generate() {
           clearInterval(pollInterval);
           const r = task.result;
           if (r && r.success) {
-            showModelInViewer(r.glb_data, r.folder);
+            lastFolder = r.folder;
+            const mv = document.getElementById('mv');
+            mv.src = r.glb_data;
+            mv.style.display = 'block';
+            document.getElementById('empty').style.display = 'none';
+            document.getElementById('hint').style.display = 'block';
             barWrap.style.display = 'block';
             bar.style.width = '100%';
             window._setProgress('✅ Thành công! (' + r.engine_used + ') – Sẵn sàng lưu file!', 100);
@@ -3547,16 +2993,11 @@ async function generate() {
               document.getElementById('conceptTxt').textContent = '✅ Đã hoàn tất mô hình 3D!';
             }
             updateLibBadge();
-            // v2.1.9: Auto-open multi-view dock
-            setTimeout(() => openMvDock(), 800);
-            // v2.1.9: Auto-show stats bar if already opened
-            if (_statsOpen) setTimeout(() => fetchModelStats(), 1000);
           } else {
             window._setProgress('❌ ' + ((r && r.error) ? r.error : 'Lỗi không xác định'), -1);
             bar.style.width = '0%';
           }
           finishRun();
-
         } else if (task.status === 'error') {
           clearInterval(pollInterval);
           window._setProgress('❌ ' + (task.error || 'Lỗi không xác định'), -1);

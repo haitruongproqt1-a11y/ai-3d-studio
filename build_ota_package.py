@@ -7,19 +7,29 @@ v_file = os.path.join(app_dir, "version.json")
 with open(v_file, "r", encoding="utf-8") as f:
     v_data = json.load(f)
 
-version = v_data.get("version", "2.0.0")
+version = v_data.get("version", "3.0.0")
 
 files_to_pack = [
     "app.py",
     "meshy_client.py",
     "hf_free_client.py",
     "texture_engine.py",
+    "texture_postprocess.py",
     "version.json",
     "Xem_File_3D.html",
     "Chay_AI_3D_Studio.bat",
     "Tat_AI_3D_Studio.bat",
     os.path.join("TripoSR", "tsr", "bake_texture.py"),
 ]
+
+# Add static assets
+static_dir = os.path.join(app_dir, "static")
+if os.path.exists(static_dir):
+    for root, dirs, files in os.walk(static_dir):
+        for file in files:
+            full_p = os.path.join(root, file)
+            rel_p = os.path.relpath(full_p, app_dir)
+            files_to_pack.append(rel_p)
 
 # Add hy3dgen package files
 hy3dgen_dir = os.path.join(app_dir, "hy3dgen")

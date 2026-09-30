@@ -9,19 +9,29 @@ app_dir = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(app_dir, "version.json"), "r", encoding="utf-8") as f:
     vdata = json.load(f)
 
-version = "v" + vdata.get("version", "1.8.0").lstrip("v")
+version = "v" + vdata.get("version", "3.0.0").lstrip("v")
 owner = "haitruongproqt1-a11y"
 repo = "ai-3d-studio"
 
-# 1. Get token
+# 1. Get token from environment, git credentials, or local untracked file
 token = os.environ.get("GITHUB_TOKEN", "")
 if not token:
-    p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    out, _ = p.communicate(input='protocol=https\nhost=github.com\n\n')
-    for line in out.splitlines():
-        if line.startswith('password='):
-            token = line.split('=', 1)[1].strip()
-            break
+    try:
+        p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        out, _ = p.communicate(input='protocol=https\nhost=github.com\n\n', timeout=5)
+        for line in out.splitlines():
+            if line.startswith('password='):
+                token = line.split('=', 1)[1].strip()
+                break
+    except Exception:
+        pass
+
+if not token:
+    # Check untracked local file outside git tracking
+    token_p = os.path.join(os.path.expanduser("~"), ".github_token")
+    if os.path.exists(token_p):
+        with open(token_p, "r") as f:
+            token = f.read().strip()
 
 if not token:
     print("Error: No GitHub token found!")
@@ -51,7 +61,7 @@ if not release_data:
     body_notes = "\n".join([f"- {note}" for note in vdata.get("releaseNotes", [])])
     payload = {
         "tag_name": version,
-        "name": f"AI 3D Studio {version} – Nâng Cấp Nướng Vân Bề Mặt PBR 8K Ultra-HD (8192px) Siêu Sắc Nét & Điêu Khắc High-Poly 311K",
+        "name": f"AI 3D Studio {version} – Giữ Trọn Giao Diện v2.1.8, Chuẩn 360° Đa Góc Nhìn, 30 Bước Flow Matching, 512 Octree, Cinema ACES & Real-ESRGAN 4K",
         "body": f"### Bản phát hành AI 3D Studio {version}\n\n{body_notes}\n\n*Gói cập nhật OTA tự động tải về qua ứng dụng.*",
         "draft": False,
         "prerelease": False

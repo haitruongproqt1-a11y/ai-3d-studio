@@ -1,16 +1,16 @@
 {
-  "version": "2.2.2",
+  "version": "3.0.0",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "v2.2.2 – Pipeline Hậu Kỳ Texture 4K & Phục Hồi Khuôn Mặt (Real-ESRGAN + Face Restoration):",
-    "🚀 Real-ESRGAN x4 (RRDBNet): Tự động nâng cấp Texture Map từ 1K lên 4K Ultra-HD sắc nét với cơ chế chia mảnh (Tiling) không làm tràn VRAM (< 100MB VRAM).",
-    "🎭 Face Restoration (YuNet + Detail Enhancement): Tự động phát hiện và khôi phục vùng khuôn mặt trên Texture UV Map giúp mắt, mũi, miệng và da mặt cực kỳ rõ nét, không bị nhòe.",
-    "🛡️ Quản Lý VRAM Tối Ưu: Sử dụng torch.cuda.empty_cache() và gc.collect() trước và sau khi chạy, hoàn toàn mượt mà trên card RTX 3050 6GB.",
-    "💾 Tự Động Cập Nhật Mô Hình: Lưu Texture 4K mới và tự động ghi đè, áp dụng vào cả file .glb lẫn .obj/.mtl.",
-    "✨ Nút '✨ Nét 4K + Mặt' trên thanh công cụ: Cho phép nâng cấp bất kỳ mô hình 3D nào chỉ với 1 cú click!",
-    "🧩 Tự Động Cắt Ảnh Ghép 4 Ô (v2.2.1) & Giao Diện 4 Bước Tinh Gọn (v2.2.0)"
+    "🌟 ĐẠI PHÁT HÀNH v3.0.0: Giữ nguyên vẹn giao diện thiết kế v2.1.8 trực quan, thanh lịch và yêu thích nhất của Studio.",
+    "📸 Đa Góc Nhìn Chuẩn 360° (Khử triệt để ruột lép & lem màu): Tích hợp nút '🧩 Cắt 4 Ô Ghép' tự động chia ảnh 2x2 thành 4 góc nhìn chuẩn, giúp AI nội suy khối 3D kín mít và map màu sắc chính xác 100%.",
+    "🐉 Mở Rộng Bước Suy Luận Flow Matching: Bổ sung các mốc 20, 25 và 30 bước Tối Thượng (Denoising siêu sâu, cấu trúc bề mặt cực mịn, triệt tiêu hiện tượng móp méo/rỗng khối).",
+    "👑 Mở Rộng Độ Phân Giải Không Gian Octree: Bổ sung 512 Octree (Lưới siêu dày, độ nét vi mô cho chi tiết hữu cơ) và 384 Octree.",
+    "🎬 Mặc Định Ánh Sáng Cinema ACES: Màu sắc chuyển tông điện ảnh chân thực, chống hiện tượng cháy mảng màu và đốm bóng gắt.",
+    "✨ Pipeline Hậu Kỳ Texture 4K (Real-ESRGAN + Face Restoration): Nút bấm '✨ Nâng Cấp Texture 4K (AI)' trên thanh công cụ cho phép upscale texture lên 4K và phục hồi khuôn mặt siêu nét mà chỉ tốn < 100MB VRAM.",
+    "🔧 Hệ Thống Manifold Watertight Repair: Tự động vá lỗ hổng (fill holes), sửa pháp tuyến và làm mịn Taubin bảo toàn thể tích 3D."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.2/update_v2.2.2.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.2/update_v2.2.2.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.2/update_v2.2.2.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.0/update_v3.0.0.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.0/update_v3.0.0.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.0/update_v3.0.0.zip"
 }
