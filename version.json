@@ -1,16 +1,16 @@
 {
-  "version": "2.2.1",
-  "buildDate": "2026-09-28",
+  "version": "2.2.2",
+  "buildDate": "2026-09-30",
   "releaseNotes": [
-    "v2.2.1 – Nâng Cấp Nạp Ảnh Ghép 4 Ô & Tự Động Cắt Chuẩn 360°:",
-    "🧩 Nút 'Tự Động Cắt Ảnh Ghép 4 Ô (2x2)': Chỉ cần chọn 1 ảnh ghép 4 góc (như ảnh Character/Product Sheet), máy tự động cắt sạch 4 góc Trước/Sau/Trái/Phải, xóa sạch chữ tiêu đề tiếng Việt và đường kẻ phân cách, tự động điền vào 4 ô!",
-    "🎯 Quy trình 4 Bước chuẩn hóa: Nguồn -> Dữ liệu vào -> Động cơ -> Sửa mesh & Tạo 3D",
-    "🔧 Tự Động Sửa Lỗi Mesh: Vá lỗ hổng, xóa mảnh vụn tách rời, sửa hướng pháp tuyến và làm mịn Taubin đa tầng",
-    "📸 Hệ thống 4 Góc Nhìn (Chuẩn 360°): Khử 100% méo mó và sai lệch cho đồ vật phức tạp (lưới quạt, nan xe, chân đế)",
-    "📋 Cẩm nang Bí Quyết Chụp Ảnh: Hướng dẫn chi tiết cách chụp 4 góc trực diện để đạt độ chuẩn xác tuyệt đối",
-    "✨ Giao diện Tinh Gọn (Collapsible): Các tùy chọn nâng cao được xếp gọn gàng, thanh lịch, dễ sử dụng cho người mới"
+    "v2.2.2 – Pipeline Hậu Kỳ Texture 4K & Phục Hồi Khuôn Mặt (Real-ESRGAN + Face Restoration):",
+    "🚀 Real-ESRGAN x4 (RRDBNet): Tự động nâng cấp Texture Map từ 1K lên 4K Ultra-HD sắc nét với cơ chế chia mảnh (Tiling) không làm tràn VRAM (< 100MB VRAM).",
+    "🎭 Face Restoration (YuNet + Detail Enhancement): Tự động phát hiện và khôi phục vùng khuôn mặt trên Texture UV Map giúp mắt, mũi, miệng và da mặt cực kỳ rõ nét, không bị nhòe.",
+    "🛡️ Quản Lý VRAM Tối Ưu: Sử dụng torch.cuda.empty_cache() và gc.collect() trước và sau khi chạy, hoàn toàn mượt mà trên card RTX 3050 6GB.",
+    "💾 Tự Động Cập Nhật Mô Hình: Lưu Texture 4K mới và tự động ghi đè, áp dụng vào cả file .glb lẫn .obj/.mtl.",
+    "✨ Nút '✨ Nét 4K + Mặt' trên thanh công cụ: Cho phép nâng cấp bất kỳ mô hình 3D nào chỉ với 1 cú click!",
+    "🧩 Tự Động Cắt Ảnh Ghép 4 Ô (v2.2.1) & Giao Diện 4 Bước Tinh Gọn (v2.2.0)"
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.1/update_v2.2.1.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.1/update_v2.2.1.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.1/update_v2.2.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.2/update_v2.2.2.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.2/update_v2.2.2.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v2.2.2/update_v2.2.2.zip"
 }

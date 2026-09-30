@@ -40,7 +40,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v2.2.1"
+APP_VERSION = "v2.2.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1630,6 +1630,44 @@ class AppApi:
             logging.error(f"open_external_url: {e}")
             return False
 
+    # ── Real-ESRGAN 4K Texture & Face Restoration Pipeline ────────────────────
+    def enhance_texture_4k(self, folder=None, task_id=None):
+        """
+        Nâng cấp Texture Map của mô hình 3D lên 4K bằng Real-ESRGAN
+        và khôi phục độ nét khuôn mặt bằng FaceRestorationPipeline.
+        Ghi đè file model.glb và model.obj.
+        """
+        target_folder = folder or self.last_folder
+        if not target_folder or not os.path.exists(target_folder):
+            return {"success": False, "error": "Chưa có mô hình nào được chọn để nâng cấp Texture 4K."}
+
+        try:
+            from texture_postprocess import apply_texture_to_model
+
+            def _prog(msg, pct):
+                self._progress(msg, pct, task_id=task_id)
+
+            res = apply_texture_to_model(
+                target_folder,
+                enable_upscale=True,
+                enable_face_restore=True,
+                target_scale=4,
+                progress_cb=_prog
+            )
+
+            if res.get("success"):
+                glb_path = res.get("glb_path", os.path.join(target_folder, "model.glb"))
+                if os.path.exists(glb_path):
+                    with open(glb_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    res["glb_data"] = f"data:model/gltf-binary;base64,{b64}"
+                    self.last_glb = glb_path
+                res["folder"] = target_folder
+            return res
+        except Exception as e:
+            logging.exception("enhance_texture_4k error")
+            return {"success": False, "error": str(e)}
+
     # ── v2.1.9 NEW: Model polygon stats ─────────────────────────────────────
     def get_model_stats(self):
         """Return polygon/vertex count and bounding box of the current model."""
@@ -2383,6 +2421,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <button class="btn-wire" id="btnStats" onclick="toggleStats()" title="Thông tin polygon, kích thước mô hình">
           📊 Thống kê
         </button>
+        <button class="btn-wire" id="btnEnhanceTex" onclick="doEnhanceTexture4K()" style="background:linear-gradient(135deg,#064e3b,#059669);color:#6ee7b7;border-color:#10b981;font-weight:700" title="Dùng Real-ESRGAN nâng cấp Texture lên 4K và khôi phục sắc nét vùng khuôn mặt">
+          ✨ Nét 4K + Mặt
+        </button>
         <button class="btn-act ready" id="btnMixamo" onclick="openMixamoModal()" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border-color:#f59e0b" title="Gắn khung xương tự động và tạo động tác Game qua Mixamo">
           🦴 Gắn Xương (Mixamo)
         </button>
@@ -3113,6 +3154,32 @@ async function autoSplitGridImage() {
     window._setProgress('❌ Lỗi cắt ảnh: ' + r.error, -1);
   } else {
     window._setProgress('Chưa chọn ảnh ghép.', -1);
+  }
+}
+
+/* ── Real-ESRGAN 4K Texture & Face Restoration ── */
+async function doEnhanceTexture4K() {
+  if (!lastFolder) {
+    window._setProgress('⚠️ Hãy tạo hoặc nạp một mô hình 3D trước!', -1);
+    return;
+  }
+  const btn = document.getElementById('btnEnhanceTex');
+  if (btn) btn.disabled = true;
+  window._setProgress('🚀 Đang khởi động Real-ESRGAN: Nâng cấp Texture 4K & phục hồi nét mặt…', 10);
+  try {
+    const r = await window.pywebview.api.enhance_texture_4k(lastFolder);
+    if (r && r.success) {
+      if (r.glb_data) {
+        showModelInViewer(r.glb_data, r.folder);
+      }
+      window._setProgress('✅ Đã nâng cấp Texture 4K (' + (r.resolution || '4096x4096') + ') & khôi phục sắc nét khuôn mặt!', 100);
+    } else {
+      window._setProgress('❌ Lỗi nâng cấp texture: ' + ((r && r.error) ? r.error : 'Không xác định'), -1);
+    }
+  } catch (e) {
+    window._setProgress('❌ Lỗi: ' + e, -1);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
