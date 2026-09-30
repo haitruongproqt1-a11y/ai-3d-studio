@@ -293,7 +293,13 @@ def clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, target_w, targ
     geom_mask = cv2.resize(geom_mask_orig.astype(np.uint8) * 255, (target_w, target_h), interpolation=interp_mask) > 127
     color_mask = cv2.resize(color_mask_orig.astype(np.uint8) * 255, (target_w, target_h), interpolation=interp_mask) > 127
 
-    padded = voronoi_pad(view_rgb, color_mask)
+    # Erode color_mask by 2 pixels to strip background fringe/semi-transparent pixels before Voronoi dilation
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    clean_seed = cv2.erode(color_mask.astype(np.uint8) * 255, kernel) > 127
+    if not np.any(clean_seed):
+        clean_seed = color_mask
+    padded = voronoi_pad(view_rgb, clean_seed)
+    padded[color_mask] = view_rgb[color_mask]
     return padded, geom_mask, color_mask
 
 
@@ -1214,28 +1220,28 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
             has_side_views = True
             logging.info("Quad-View 360° Engine Activated: Front 0°, Right +90°, Back 180°, Left -90°")
 
-    # 6. Pack & Super-Sample 8K Ultra-HD Texture Atlas (4-View or 2-View)
-    if has_side_views:
-        # Atlas layout: [Front (0°) | Right (+90°) | Back (180°) | Left (-90°)]
-        atlas_arr = np.hstack([front_padded, right_padded, back_padded, left_padded])
-        w_atlas_factor = 4.0
-    else:
-        # Atlas layout: [Front (0°) | Back (180°)]
-        atlas_arr = np.hstack([front_padded, back_padded])
-        w_atlas_factor = 2.0
-
+    # 6. Pack & Super-Sample 8K Ultra-HD Texture Atlas (8192px along primary axis; Left: Front, Right: Back)
+    atlas_arr = np.hstack([front_padded, back_padded])
     atlas_8k = upscale_atlas_8k(atlas_arr, target_max_dim=8192)
     atlas_pil, m_factor, r_factor = apply_pbr_style_preset(
         atlas_8k, pbr_preset=pbr_preset,
         metallic_override=metallic_override, roughness_override=roughness_override
     )
 
-    # 7. Sector Partitioning & Registered UV Mapping
+    # 7. Segment Front vs Back Faces & Assign Continuous Registered UVs
     fn = mesh.face_normals
     f = mesh.faces
     fc = mesh.vertices[f].mean(axis=1)
     f_s = np.clip((y1_3d - fc[:, 1]) / h_3d, 0.0, 1.0)
-    w_tex = float(W * w_atlas_factor)
+    f_zmin = np.interp(f_s, s_grid, z3_min_s)
+    f_zmax = np.interp(f_s, s_grid, z3_max_s)
+    f_z_rel = (fc[:, 2] - f_zmin) / np.maximum(0.05, f_zmax - f_zmin)
+
+    # 100% continuous front hemisphere: NO knife cuts across the chest or face!
+    front_face_mask = (fn[:, 2] >= 0.0) | ((fn[:, 2] >= -0.15) & (f_z_rel >= 0.50))
+    back_face_mask = ~front_face_mask
+
+    w_tex = float(W * 2.0)
     h_tex = float(H)
 
     all_verts = []
@@ -1243,119 +1249,33 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     all_uvs = []
     v_offset = 0
 
-    if has_side_views:
-        theta = np.arctan2(fn[:, 0], fn[:, 2])
-        is_arm_level = (f_s >= 0.15) & (f_s <= 0.65)
-        is_right_arm = is_arm_level & (fc[:, 0] > 0.14)
-        is_left_arm  = is_arm_level & (fc[:, 0] < -0.14)
+    if np.any(front_face_mask):
+        front_sub = mesh.submesh([front_face_mask], append=True)
+        fv = front_sub.vertices
+        fx_px, fy_px = _compute_anatomical_uv_mapping(
+            fv, geom_mask_f, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
+            nose_x_3d, is_humanoid=is_humanoid, is_back=False
+        )
+        front_u = np.clip(fx_px / w_tex, 0.001, 0.499)
+        front_v = np.clip(1.0 - (fy_px / h_tex), 0.001, 0.999)
+        all_verts.append(fv)
+        all_faces.append(front_sub.faces + v_offset)
+        all_uvs.append(np.column_stack([front_u, front_v]))
+        v_offset += len(fv)
 
-        front_face_mask = (theta >= -np.pi/4) & (theta < np.pi/4)
-        right_face_mask = (theta >= np.pi/4) & (theta < 3*np.pi/4)
-        back_face_mask  = (theta >= 3*np.pi/4) | (theta < -3*np.pi/4)
-        left_face_mask  = (theta >= -3*np.pi/4) & (theta < -np.pi/4)
-
-        # Arm priority for side views
-        right_face_mask = right_face_mask | (is_right_arm & (fn[:, 0] > 0.05))
-        left_face_mask  = left_face_mask  | (is_left_arm  & (fn[:, 0] < -0.05))
-        front_face_mask = front_face_mask & ~(right_face_mask | left_face_mask)
-        back_face_mask  = back_face_mask  & ~(right_face_mask | left_face_mask)
-
-        # Sector 1: Front (u in [0.00, 0.25])
-        if np.any(front_face_mask):
-            sub = mesh.submesh([front_face_mask], append=True)
-            fv = sub.vertices
-            fx_px, fy_px = _compute_anatomical_uv_mapping(
-                fv, geom_mask_f, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
-                nose_x_3d, is_humanoid=is_humanoid, is_back=False
-            )
-            front_u = np.clip(fx_px / w_tex, 0.001, 0.249)
-            front_v = np.clip(1.0 - (fy_px / h_tex), 0.001, 0.999)
-            all_verts.append(fv)
-            all_faces.append(sub.faces + v_offset)
-            all_uvs.append(np.column_stack([front_u, front_v]))
-            v_offset += len(fv)
-
-        # Sector 2: Right (u in [0.25, 0.50])
-        if np.any(right_face_mask):
-            sub = mesh.submesh([right_face_mask], append=True)
-            rv = sub.vertices
-            rx_px, ry_px = _compute_side_uv_mapping(
-                rv, geom_mask_r, y0_3d, y1_3d, z3_min_s, z3_max_s,
-                is_left=False, is_humanoid=is_humanoid
-            )
-            right_u = np.clip(0.25 + (rx_px / w_tex), 0.251, 0.499)
-            right_v = np.clip(1.0 - (ry_px / h_tex), 0.001, 0.999)
-            all_verts.append(rv)
-            all_faces.append(sub.faces + v_offset)
-            all_uvs.append(np.column_stack([right_u, right_v]))
-            v_offset += len(rv)
-
-        # Sector 3: Back (u in [0.50, 0.75])
-        if np.any(back_face_mask):
-            sub = mesh.submesh([back_face_mask], append=True)
-            bv = sub.vertices
-            bx_px, by_px = _compute_anatomical_uv_mapping(
-                bv, geom_mask_b, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
-                nose_x_3d, is_humanoid=is_humanoid, is_back=True
-            )
-            back_u = np.clip(0.50 + (bx_px / w_tex), 0.501, 0.749)
-            back_v = np.clip(1.0 - (by_px / h_tex), 0.001, 0.999)
-            all_verts.append(bv)
-            all_faces.append(sub.faces + v_offset)
-            all_uvs.append(np.column_stack([back_u, back_v]))
-            v_offset += len(bv)
-
-        # Sector 4: Left (u in [0.75, 1.00])
-        if np.any(left_face_mask):
-            sub = mesh.submesh([left_face_mask], append=True)
-            lv = sub.vertices
-            lx_px, ly_px = _compute_side_uv_mapping(
-                lv, geom_mask_l, y0_3d, y1_3d, z3_min_s, z3_max_s,
-                is_left=True, is_humanoid=is_humanoid
-            )
-            left_u = np.clip(0.75 + (lx_px / w_tex), 0.751, 0.999)
-            left_v = np.clip(1.0 - (ly_px / h_tex), 0.001, 0.999)
-            all_verts.append(lv)
-            all_faces.append(sub.faces + v_offset)
-            all_uvs.append(np.column_stack([left_u, left_v]))
-            v_offset += len(lv)
-
-    else:
-        # Dual-View Mode (Front & Back)
-        f_zmin = np.interp(f_s, s_grid, z3_min_s)
-        f_zmax = np.interp(f_s, s_grid, z3_max_s)
-        f_z_rel = (fc[:, 2] - f_zmin) / np.maximum(0.05, f_zmax - f_zmin)
-
-        front_face_mask = (fn[:, 2] >= 0.0) | ((fn[:, 2] >= -0.15) & (f_z_rel >= 0.50))
-        back_face_mask = ~front_face_mask
-
-        if np.any(front_face_mask):
-            front_sub = mesh.submesh([front_face_mask], append=True)
-            fv = front_sub.vertices
-            fx_px, fy_px = _compute_anatomical_uv_mapping(
-                fv, geom_mask_f, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
-                nose_x_3d, is_humanoid=is_humanoid, is_back=False
-            )
-            front_u = np.clip(fx_px / w_tex, 0.001, 0.499)
-            front_v = np.clip(1.0 - (fy_px / h_tex), 0.001, 0.999)
-            all_verts.append(fv)
-            all_faces.append(front_sub.faces + v_offset)
-            all_uvs.append(np.column_stack([front_u, front_v]))
-            v_offset += len(fv)
-
-        if np.any(back_face_mask):
-            back_sub = mesh.submesh([back_face_mask], append=True)
-            bv = back_sub.vertices
-            bx_px, by_px = _compute_anatomical_uv_mapping(
-                bv, geom_mask_b, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
-                nose_x_3d, is_humanoid=is_humanoid, is_back=True
-            )
-            back_u = np.clip(0.5 + (bx_px / w_tex), 0.501, 0.999)
-            back_v = np.clip(1.0 - (by_px / h_tex), 0.001, 0.999)
-            all_verts.append(bv)
-            all_faces.append(back_sub.faces + v_offset)
-            all_uvs.append(np.column_stack([back_u, back_v]))
-            v_offset += len(bv)
+    if np.any(back_face_mask):
+        back_sub = mesh.submesh([back_face_mask], append=True)
+        bv = back_sub.vertices
+        bx_px, by_px = _compute_anatomical_uv_mapping(
+            bv, geom_mask_b, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
+            nose_x_3d, is_humanoid=is_humanoid, is_back=True
+        )
+        back_u = np.clip(0.5 + (bx_px / w_tex), 0.501, 0.999)
+        back_v = np.clip(1.0 - (by_px / h_tex), 0.001, 0.999)
+        all_verts.append(bv)
+        all_faces.append(back_sub.faces + v_offset)
+        all_uvs.append(np.column_stack([back_u, back_v]))
+        v_offset += len(bv)
 
     # 8. Create PBR Material with Normal Map & ORM Map
     try:

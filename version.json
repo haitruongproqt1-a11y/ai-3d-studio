@@ -1,14 +1,14 @@
 {
-  "version": "3.0.4",
+  "version": "3.0.5",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "🚀 Động Cơ Chiếu Vân 4 Góc Nhìn Chuẩn 360° (Quad-View Orthogonal 360° PBR): Khắc phục 100% hiện tượng biến dạng hoặc kéo dãn màu ở 2 cạnh bên sườn (Cạnh Trái & Cạnh Phải). Tích hợp toàn diện 4 góc nhìn chuẩn (Trước 0°, Phải +90°, Sau 180°, Trái -90°) vào cùng một Texture Atlas 8K Ultra-HD.",
-    "🦾 Phân Đoạn Giải Phẫu Ưu Tiên Cánh Tay (Anatomical Arm & Lateral Priority): Phân bổ chính xác góc nhìn 2 bên sườn cho toàn bộ bắp tay, cánh tay, hông và túi quần rằn ri, loại bỏ hoàn toàn các vệt kéo màu loang lổ.",
-    "📐 Tự Động Định Hướng Không Gian Chiều Sâu (3D Depth Aspect Calibration): Tự động nhận diện hướng nhìn khuôn mặt (trái/phải) và chuẩn hóa tỷ lệ độ dày cơ thể khớp 1:1 với ảnh chụp góc nghiêng.",
-    "🔍 Tự Động Nhận Diện Đủ 4 Ảnh Đồng Hành (Smart 4-View Auto-Pairing): Khi nạp ảnh chính diện, phần mềm tự động quét và nạp ảnh Sau lưng, Cạnh Trái, Cạnh Phải nếu có trong cùng thư mục.",
-    "✨ Hoàn Thiện PBR Đa Kênh Tức Thì: Tích hợp sẵn bản đồ pháp tuyến vi mô Tangent-Space Normal Map và ORM Map (Roughness/Metallic/AO) cho toàn bộ 4 góc nhìn."
+    "🔧 Sửa Loang Lỗ Voronoi (Erode Seed Fix): Khắc phục triệt để hiện tượng loang lỗ màu sắc xuất hiện ở phiên bản 3.0.4. Nguyên nhân là pixel viền bán trong suốt bị Voronoi dilation kéo lan ra toàn ảnh — nay đã được loại bỏ bằng bước erode 5×5 trước khi dilate.",
+    "🎯 Khôi Phục Seamless 2-View Chuẩn (Rollback Stable Baseline): Quay về kiến trúc 2-view ổn định [Trước | Sau] đã đạt chất lượng seamless tốt, loại bỏ sector partitioning gây UV discontinuity.",
+    "✅ Mặt Trước & Mặt Sau Chuẩn Sắc Nét: Giữ nguyên độ chính xác mặt trước và mặt sau đã đạt từ v3.0.3.",
+    "🔍 Tự Động Nhận Diện 4 Ảnh Đồng Hành (Smart 4-View Auto-Pairing): Khi nạp ảnh chính diện, phần mềm tự động quét và nạp ảnh Sau lưng, Cạnh Trái, Cạnh Phải nếu có trong cùng thư mục.",
+    "✨ PBR Đa Kênh Tức Thì: Tangent-Space Normal Map và ORM Map (Roughness/Metallic/AO) hoàn chỉnh."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.4/update_v3.0.4.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.4/update_v3.0.4.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.4/update_v3.0.4.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.5/update_v3.0.5.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.5/update_v3.0.5.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.5/update_v3.0.5.zip"
 }
