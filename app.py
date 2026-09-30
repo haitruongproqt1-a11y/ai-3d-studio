@@ -41,7 +41,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.1.0"
+APP_VERSION = "v3.1.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1033,7 +1033,8 @@ class AppApi:
 
     # ── TEXT TO 3D PIPELINE ──────────────────────────────────────────────────
     def generate_from_text(self, prompt: str, engine="turbo", quality="pbr_1024",
-                           smooth=True, num_steps=10, octree_res=256, task_id=None):
+                           smooth=True, num_steps=10, octree_res=256, task_id=None,
+                           color_mode="color"):
         prompt = prompt.strip()
         if not prompt:
             return {"success": False, "error": "Vui lòng nhập mô tả văn bản cần tạo 3D!"}
@@ -2355,7 +2356,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v3.1.0</span>
+    <span class="ver" id="ver">v3.1.1</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>

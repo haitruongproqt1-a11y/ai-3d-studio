@@ -1,14 +1,14 @@
 {
-  "version": "3.1.0",
+  "version": "3.1.1",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "🎯 Side-View Angle-Weighted Blend (Không Chia Sector Cứng): 2 bên sườn nay được tô màu mượt mà từ ảnh góc cạnh thật. Engine blend UV theo trọng số góc pháp tuyến |fn_x| với cubic smoothstep — không còn hard cut → không seam → không loang lỗ. Áp dụng cho MỌI loại model.",
-    "🌍 Universal Model Support (Cylindrical UV cho Non-Humanoid): Tự động nhận diện model không phải người (thú 4 chân, xe cộ, đồ vật, nhân vật game) và áp dụng UV hình trụ chuẩn thay vì UV giải phẫu người. Kết quả: mọi model đều có texture đúng, không bị biến dạng.",
-    "🎨 Color Histogram Harmonization (Cân Bằng Màu Đa Góc Nhìn): Tự động cân bằng histogram màu giữa ảnh trước/sau/trái/phải trước khi đóng gói atlas. Loại bỏ hoàn toàn hiện tượng chênh màu áo/da giữa các góc nhìn.",
-    "🔲 Seam Dilation 8px (Xóa Đường Viền Đen UV Seam): Sau khi tạo atlas, mở rộng màu foreground ra 8px vào vùng trong suốt bằng Voronoi. Đảm bảo UV coordinates ở cạnh mesh luôn sample được màu hợp lệ — không còn đường đen/trắng ở viền model.",
-    "🔧 Fix Loang Lỗ v3.0.5 (Erode Seed + 2-View Baseline): Kế thừa từ v3.0.5 — erode 5×5 trước Voronoi dilation và kiến trúc 2-view ổn định."
+    "🔧 Hotfix: Sửa lỗi 'color_mode' khi dùng RTX Đăng Cấp từ văn bản. Lỗi 'generate_from_text() got an unexpected keyword argument color_mode' đã được khắc phục hoàn toàn — tính năng tạo 3D từ văn bản (RTX Đăng Cấp, RTX Siêu Tốc, Cloud Free) hoạt động 100%.",
+    "🎯 Side-View Angle-Weighted Blend: 2 bên sườn blend mượt từ ảnh cạnh thật, không còn seam artifacts (từ v3.1.0).",
+    "🌍 Universal Model Support (Cylindrical UV): Hỗ trợ mọi loại model — người, thú, xe, đồ vật (từ v3.1.0).",
+    "🎨 Color Histogram Harmonization: Cân bằng màu giữa tất cả góc nhìn (từ v3.1.0).",
+    "🔲 Seam Dilation 8px: Xóa đường viền đen ở UV seam (từ v3.1.0)."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.0/update_v3.1.0.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.0/update_v3.1.0.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.0/update_v3.1.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.1/update_v3.1.1.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.1/update_v3.1.1.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.1/update_v3.1.1.zip"
 }
