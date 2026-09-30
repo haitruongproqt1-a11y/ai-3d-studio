@@ -1121,11 +1121,12 @@ class AppApi:
                     )
 
             with torch.no_grad():
+                chunks_eval = 20000 if int(octree_res) <= 256 else 8000
                 mesh_outputs = hunyuan_pipeline(
                     image=image,
                     num_inference_steps=total_steps,
                     octree_resolution=int(octree_res),
-                    num_chunks=6000,
+                    num_chunks=chunks_eval,
                     output_type="trimesh",
                     enable_pbar=False,
                     callback=step_cb,
@@ -2081,11 +2082,11 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <div class="sg" style="margin-bottom:7px">
         <label>Độ phân giải không gian Octree:</label>
         <select id="turboOctree">
-          <option value="256" selected>💎 256 Octree (~2-3 phút) – Chuẩn Studio Siêu nét (Khuyên dùng)</option>
-          <option value="512">👑 512 Octree (Lưới Siêu Dày & Cực Nét - Cần GPU 6GB+)</option>
-          <option value="384">🌟 384 Octree (~4 phút) – Chi tiết cao & An toàn VRAM</option>
-          <option value="192">🚀 192 Octree (~1.5 phút) – Cân bằng sắc nét & tốc độ</option>
-          <option value="160">⚡ 160 Octree (~50s) – Chuẩn nhẹ cho Game & Rigging</option>
+          <option value="256" selected>💎 256 Octree (~1.5 phút) – Chuẩn Studio 556K Lưới (Khuyên dùng 100%)</option>
+          <option value="192">🚀 192 Octree (~1 phút) – Cân bằng sắc nét & tốc độ</option>
+          <option value="160">⚡ 160 Octree (~35s) – Cực nhanh cho Game & Rigging</option>
+          <option value="384">⚠️ 384 Octree (~6-8 phút) – Chi tiết rất nặng (Cần GPU 8GB+)</option>
+          <option value="512">🛑 512 Octree (~30 phút) – 135 Triệu Voxel (Dễ tràn VRAM trên GPU 6GB)</option>
         </select>
       </div>
     </div>
