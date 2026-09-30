@@ -41,7 +41,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.0.3"
+APP_VERSION = "v3.0.4"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -781,7 +781,10 @@ class AppApi:
                 stem = stem[:len(stem)-len(sfx)]
                 break
 
-        res = {"back": None, "side": None, "back_data": None, "back_filename": None}
+        res = {"back": None, "side": None, "left": None, "right": None,
+               "back_data": None, "back_filename": None,
+               "left_data": None, "left_filename": None,
+               "right_data": None, "right_filename": None}
         valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
         try:
             entries = os.listdir(folder)
@@ -796,23 +799,42 @@ class AppApi:
                 if any(fl.startswith(ig) for ig in ['texture', 'thumb', 'normal', 'orm', 'material_', 'input_cutout']):
                     continue
 
+                def _b64(path, ext):
+                    try:
+                        with open(path, "rb") as bf:
+                            b64_b = base64.b64encode(bf.read()).decode()
+                        ext_b = ext.lower().lstrip(".")
+                        if ext_b == "jpg": ext_b = "jpeg"
+                        return f"data:image/{ext_b};base64,{b64_b}"
+                    except Exception:
+                        return None
+
                 # Check for back image
                 is_back_match = (any(k in fl for k in ['_back', '-back', 'sau', 'rear', 'lung']) or fl.endswith('_b') or fl.endswith('-b'))
                 if is_back_match and (stem.lower() in fl or len(entries) <= 8):
                     if res["back"] is None:
                         res["back"] = f_path
                         res["back_filename"] = f
-                        try:
-                            with open(f_path, "rb") as bf:
-                                b64_b = base64.b64encode(bf.read()).decode()
-                            ext_b = f_ext.lower().lstrip(".")
-                            if ext_b == "jpg": ext_b = "jpeg"
-                            res["back_data"] = f"data:image/{ext_b};base64,{b64_b}"
-                        except Exception:
-                            pass
+                        res["back_data"] = _b64(f_path, f_ext)
 
-                # Check for side image
-                is_side_match = (any(k in fl for k in ['_side', '-side', 'trai', 'phai', 'left', 'right', 'ben']) or fl.endswith('_s') or fl.endswith('-s'))
+                # Check for left image
+                is_left_match = (any(k in fl for k in ['_left', '-left', 'trai', 'canhtrai']) or fl.endswith('_l') or fl.endswith('-l'))
+                if is_left_match and (stem.lower() in fl or len(entries) <= 8):
+                    if res["left"] is None:
+                        res["left"] = f_path
+                        res["left_filename"] = f
+                        res["left_data"] = _b64(f_path, f_ext)
+
+                # Check for right image
+                is_right_match = (any(k in fl for k in ['_right', '-right', 'phai', 'canhphai']) or fl.endswith('_r') or fl.endswith('-r'))
+                if is_right_match and (stem.lower() in fl or len(entries) <= 8):
+                    if res["right"] is None:
+                        res["right"] = f_path
+                        res["right_filename"] = f
+                        res["right_data"] = _b64(f_path, f_ext)
+
+                # General side image (fallback)
+                is_side_match = (any(k in fl for k in ['_side', '-side', 'ben']) or fl.endswith('_s') or fl.endswith('-s'))
                 if is_side_match and (stem.lower() in fl or len(entries) <= 8):
                     if res["side"] is None:
                         res["side"] = f_path
@@ -2333,7 +2355,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v3.0.3</span>
+    <span class="ver" id="ver">v3.0.4</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
@@ -3298,6 +3320,7 @@ async function pickImage() {
     }
     if (hF) hF.style.display = 'none';
 
+    let autoFound = [];
     if (r.companion && r.companion.back) {
       multiImgs.back = r.companion.back;
       const pB = document.getElementById('mvPrevBack');
@@ -3307,7 +3330,33 @@ async function pickImage() {
         pB.style.display = 'block';
       }
       if (hB) hB.style.display = 'none';
-      window._setProgress('💡 Đã tự động nhận diện ảnh Mặt Sau (' + (r.companion.back_filename || '') + ') để tô màu 360° chuẩn xác!', -1);
+      autoFound.push('Mặt Sau');
+    }
+    if (r.companion && r.companion.left) {
+      multiImgs.left = r.companion.left;
+      const pL = document.getElementById('mvPrevLeft');
+      const hL = document.getElementById('mvHintLeft');
+      if (pL && r.companion.left_data) {
+        pL.src = r.companion.left_data;
+        pL.style.display = 'block';
+      }
+      if (hL) hL.style.display = 'none';
+      autoFound.push('Cạnh Trái');
+    }
+    if (r.companion && r.companion.right) {
+      multiImgs.right = r.companion.right;
+      const pR = document.getElementById('mvPrevRight');
+      const hR = document.getElementById('mvHintRight');
+      if (pR && r.companion.right_data) {
+        pR.src = r.companion.right_data;
+        pR.style.display = 'block';
+      }
+      if (hR) hR.style.display = 'none';
+      autoFound.push('Cạnh Phải');
+    }
+
+    if (autoFound.length > 0) {
+      window._setProgress('💡 Đã tự động nhận diện đủ các góc nhìn (' + autoFound.join(', ') + ') để tạo 3D chuẩn 360°!', -1);
     } else {
       window._setProgress('Đã chọn: ' + (r.name || r.path.split(/[/\\]/).pop()) + ' – Nhấn nút Bắt đầu tạo 3D!', -1);
     }

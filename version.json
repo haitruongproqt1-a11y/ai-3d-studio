@@ -1,14 +1,14 @@
 {
-  "version": "3.0.3",
+  "version": "3.0.4",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "💎 Khử 100% Hiện Tượng Bóng Nhựa & Vải Loang Đen: Loại bỏ hoàn toàn specular plastic shine, chuẩn hóa chất liệu vải và da người về Dielectric phi kim tự nhiên (Roughness 0.90 mờ lì, Metallic = 0.0), triệt tiêu hoàn toàn các đốm đen obsidian trên túi áo và nếp gấp.",
-    "🎒 Khôi Phục Toàn Vẹn 100% Chi Tiết Mặt Trước: Tối ưu thuật toán phân tách mặt trước/sau theo góc pháp tuyến (Normal-based Face Separation), khắc phục triệt để lỗi 67.000 đa giác mặt trước (bình tông nước, túi bao đạn) bị tô nhầm ảnh lưng.",
-    "🌊 Triệt Tiêu Sọc Ngang Trên Normal Map Bằng Voronoi Dilation: Thay thế toàn bộ thuật toán đệm ngang cũ bằng bộ mở rộng đẳng hướng Voronoi 2D, loại bỏ nếp gấp tôn nhăn giả tạo trên cánh tay và thân áo.",
-    "💡 Ánh Sáng Mặc Định Studio Chân Thực (Ảnh Gốc): Chế độ ánh sáng Neutral trung thực với ảnh gốc được kích hoạt tự động ngay khi hoàn tất mô hình, màu sắc trong trẻo, không bị cháy sáng hay chìm bóng như ACES Cinema.",
-    "⚡ Tối Ưu Nổi Khối Tinh Tế: Tinh chỉnh cường độ Normal Bump về chuẩn công nghiệp điện ảnh (0.75), tái hiện thớ vải và đường may tinh xảo như các tài sản 3D thương mại."
+    "🚀 Động Cơ Chiếu Vân 4 Góc Nhìn Chuẩn 360° (Quad-View Orthogonal 360° PBR): Khắc phục 100% hiện tượng biến dạng hoặc kéo dãn màu ở 2 cạnh bên sườn (Cạnh Trái & Cạnh Phải). Tích hợp toàn diện 4 góc nhìn chuẩn (Trước 0°, Phải +90°, Sau 180°, Trái -90°) vào cùng một Texture Atlas 8K Ultra-HD.",
+    "🦾 Phân Đoạn Giải Phẫu Ưu Tiên Cánh Tay (Anatomical Arm & Lateral Priority): Phân bổ chính xác góc nhìn 2 bên sườn cho toàn bộ bắp tay, cánh tay, hông và túi quần rằn ri, loại bỏ hoàn toàn các vệt kéo màu loang lổ.",
+    "📐 Tự Động Định Hướng Không Gian Chiều Sâu (3D Depth Aspect Calibration): Tự động nhận diện hướng nhìn khuôn mặt (trái/phải) và chuẩn hóa tỷ lệ độ dày cơ thể khớp 1:1 với ảnh chụp góc nghiêng.",
+    "🔍 Tự Động Nhận Diện Đủ 4 Ảnh Đồng Hành (Smart 4-View Auto-Pairing): Khi nạp ảnh chính diện, phần mềm tự động quét và nạp ảnh Sau lưng, Cạnh Trái, Cạnh Phải nếu có trong cùng thư mục.",
+    "✨ Hoàn Thiện PBR Đa Kênh Tức Thì: Tích hợp sẵn bản đồ pháp tuyến vi mô Tangent-Space Normal Map và ORM Map (Roughness/Metallic/AO) cho toàn bộ 4 góc nhìn."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.3/update_v3.0.3.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.3/update_v3.0.3.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.3/update_v3.0.3.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.4/update_v3.0.4.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.4/update_v3.0.4.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.4/update_v3.0.4.zip"
 }
