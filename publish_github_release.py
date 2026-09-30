@@ -99,17 +99,27 @@ for asset_name in assets_to_upload:
             except Exception as de:
                 print(f"Notice deleting asset: {de}")
 
-    print(f"Uploading {asset_name} ({os.path.getsize(asset_path)/1024:.2f} KB)...")
-    upload_url = f"{upload_base}?name={asset_name}"
-    up_headers = {
-        "Authorization": f"token {token}",
-        "Content-Type": "application/zip",
-        "User-Agent": "AI-3D-Studio-Release"
-    }
-    with open(asset_path, "rb") as f:
-        data = f.read()
-    up_req = urllib.request.Request(upload_url, data=data, headers=up_headers, method="POST")
-    with urllib.request.urlopen(up_req) as resp:
-        print(f"Uploaded {asset_name} successfully! Status:", resp.status)
+    for attempt in range(4):
+        try:
+            print(f"Uploading {asset_name} ({os.path.getsize(asset_path)/1024:.2f} KB) [Attempt {attempt+1}/4]...")
+            upload_url = f"{upload_base}?name={asset_name}"
+            up_headers = {
+                "Authorization": f"token {token}",
+                "Content-Type": "application/zip",
+                "User-Agent": "AI-3D-Studio-Release"
+            }
+            with open(asset_path, "rb") as f:
+                data = f.read()
+            up_req = urllib.request.Request(upload_url, data=data, headers=up_headers, method="POST")
+            with urllib.request.urlopen(up_req, timeout=60) as resp:
+                print(f"Uploaded {asset_name} successfully! Status:", resp.status)
+            break
+        except Exception as ue:
+            print(f"Error uploading {asset_name} (attempt {attempt+1}): {ue}")
+            if attempt < 3:
+                import time
+                time.sleep(2)
+            else:
+                raise
 
 print(f"\nAll OTA packages for {version} successfully published to GitHub Release!")
