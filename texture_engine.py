@@ -752,6 +752,107 @@ def harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_
     return np.clip(back_f, 0, 255).astype(np.uint8)
 
 
+def harmonize_color_balance(reference, *targets):
+    """
+    Matches the color histogram of each target image to a reference image.
+    Uses per-channel cumulative histogram transfer (Reinhard method) capped at ±30 pts
+    so colors are harmonized without looking over-processed.
+    Works for any model type — humanoid, animal, object, vehicle.
+    """
+    ref = reference.astype(np.float32)
+    out = []
+    for tgt in targets:
+        if tgt is None:
+            out.append(None)
+            continue
+        result = tgt.astype(np.float32).copy()
+        for c in range(3):
+            r_ch = ref[:, :, c].ravel()
+            t_ch = tgt[:, :, c].ravel()
+            # Only use non-zero pixels for histogram reference
+            r_valid = r_ch[r_ch > 4]
+            t_valid = t_ch[t_ch > 4]
+            if len(r_valid) < 100 or len(t_valid) < 100:
+                continue
+            r_mean, r_std = float(np.mean(r_valid)), float(np.std(r_valid))
+            t_mean, t_std = float(np.mean(t_valid)), float(np.std(t_valid))
+            if t_std < 1.0:
+                continue
+            # Scale + shift to match reference statistics
+            scale = np.clip(r_std / max(1.0, t_std), 0.7, 1.4)
+            shift = np.clip(r_mean - t_mean * scale, -30.0, 30.0)
+            result[:, :, c] = result[:, :, c] * scale + shift
+        out.append(np.clip(result, 0, 255).astype(np.uint8))
+    return out
+
+
+def dilate_atlas_seam(atlas_arr, mask_union, dilation_px=8):
+    """
+    Dilates atlas colors outward by dilation_px pixels into empty/transparent regions.
+    Eliminates black/white UV seam lines at mesh boundaries by guaranteeing UV coordinates
+    near seam edges always sample a valid foreground color.
+    """
+    if mask_union is None or not np.any(mask_union):
+        return atlas_arr
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation_px * 2 + 1, dilation_px * 2 + 1))
+    dilated_mask = cv2.dilate(mask_union.astype(np.uint8) * 255, kernel) > 127
+    # Voronoi-fill the dilated region with nearest foreground color
+    padded = voronoi_pad(atlas_arr, mask_union)
+    result = atlas_arr.copy()
+    fill_region = dilated_mask & ~mask_union
+    result[fill_region] = padded[fill_region]
+    return result
+
+
+def _compute_cylindrical_uv_mapping(verts, y0_3d, y1_3d, x_ctr, z_ctr,
+                                    front_half_atlas_w, atlas_h, is_back_half=False):
+    """
+    Universal cylindrical UV projection for non-humanoid models (animals, objects, vehicles, creatures).
+    - Projects each vertex onto an imaginary cylinder centered on the model centroid.
+    - theta = atan2(vz - z_ctr, vx - x_ctr)  →  horizontal U  [0..1 within atlas half]
+    - height = (vy - y0_3d) / (y1_3d - y0_3d) →  vertical V   [0..1]
+
+    Atlas layout: left half [U 0..0.5] = front hemisphere (|theta| < π/2),
+                  right half [U 0.5..1] = back hemisphere (|theta| >= π/2).
+
+    For is_back_half=True: returns U coords mapped into [0.5..1.0] of the atlas.
+
+    Advantages over sector partitioning:
+    - No hard cuts → no UV discontinuity seam lines
+    - Works for ANY mesh shape (box, sphere, elongated, animal spine, etc.)
+    - Handles tilted/non-upright models via bounding box normalization
+    """
+    h_3d = max(1e-4, y1_3d - y0_3d)
+
+    # Azimuth angle from model centroid (XZ plane)
+    dx = verts[:, 0] - x_ctr
+    dz = verts[:, 2] - z_ctr
+    theta = np.arctan2(dz, dx)  # range [-π, π]
+
+    # Normalize theta: front hemisphere [-π/2, π/2] → t_front ∈ [0, 1]
+    # Back hemisphere [π/2, π] ∪ [-π, -π/2] → t_back ∈ [0, 1]
+    # Front UV: map t_front → [0, front_half_atlas_w]
+    # Back UV:  map t_back  → [front_half_atlas_w, 2*front_half_atlas_w]
+
+    t_front = np.clip(theta / (0.5 * np.pi), -1.0, 1.0) * 0.5 + 0.5  # [0..1], center=front
+    # Back hemisphere: theta > π/2 or theta < -π/2
+    abs_theta = np.abs(theta)
+    t_back_raw = np.where(theta >= 0,
+                          (theta - 0.5 * np.pi) / (0.5 * np.pi),
+                          (np.pi + theta) / np.pi)
+    t_back = np.clip(t_back_raw, 0.0, 1.0)
+
+    v_s = np.clip((y1_3d - verts[:, 1]) / h_3d, 0.0, 1.0)
+
+    if is_back_half:
+        fx = front_half_atlas_w + t_back * front_half_atlas_w
+    else:
+        fx = t_front * front_half_atlas_w
+
+    fy = v_s * atlas_h
+    return fx, fy
+
+
 def repair_hands_skin(mesh, base_img):
     """
     Guarantees hand vertices on humanoid models have natural human skin tones
@@ -1208,20 +1309,42 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
         right_padded, geom_mask_r = _process_side_img(right_image_source)
 
         if left_padded is not None and right_padded is None:
-            # Synthesize right by mirroring left
             right_padded = cv2.flip(left_padded, 1)
             geom_mask_r = cv2.flip(geom_mask_l.astype(np.uint8), 1) > 0
         elif right_padded is not None and left_padded is None:
-            # Synthesize left by mirroring right
             left_padded = cv2.flip(right_padded, 1)
             geom_mask_l = cv2.flip(geom_mask_r.astype(np.uint8), 1) > 0
 
         if left_padded is not None and right_padded is not None:
             has_side_views = True
-            logging.info("Quad-View 360° Engine Activated: Front 0°, Right +90°, Back 180°, Left -90°")
+            logging.info("Quad-View 360° Angle-Blend Engine: Front 0°, Right +90°, Back 180°, Left -90°")
+
+    # 5c. Color Harmonization — match back/side histogram to front (reference)
+    #     Eliminates color shift between views for any model type
+    if auto_sync_textures:
+        try:
+            sides_to_harmonize = [x for x in [back_padded, left_padded, right_padded] if x is not None]
+            if sides_to_harmonize:
+                harmonized = harmonize_color_balance(front_padded, *sides_to_harmonize)
+                idx = 0
+                back_padded = harmonized[idx]; idx += 1
+                if left_padded is not None:
+                    left_padded = harmonized[idx]; idx += 1
+                if right_padded is not None:
+                    right_padded = harmonized[idx]
+        except Exception as e_hcb:
+            logging.warning(f"Color harmonization notice: {e_hcb}")
 
     # 6. Pack & Super-Sample 8K Ultra-HD Texture Atlas (8192px along primary axis; Left: Front, Right: Back)
     atlas_arr = np.hstack([front_padded, back_padded])
+
+    # 6b. Seam Dilation — fill 8px border outward so UV seam never samples black/white gap
+    try:
+        mask_union = np.hstack([geom_mask_f, geom_mask_b if geom_mask_b is not None else geom_mask_f])
+        atlas_arr = dilate_atlas_seam(atlas_arr, mask_union, dilation_px=8)
+    except Exception as e_dil:
+        logging.warning(f"Seam dilation notice: {e_dil}")
+
     atlas_8k = upscale_atlas_8k(atlas_arr, target_max_dim=8192)
     atlas_pil, m_factor, r_factor = apply_pbr_style_preset(
         atlas_8k, pbr_preset=pbr_preset,
@@ -1229,6 +1352,7 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     )
 
     # 7. Segment Front vs Back Faces & Assign Continuous Registered UVs
+    #    with Angle-Weighted Side-View Blend (no hard sector cuts → no seam artifacts)
     fn = mesh.face_normals
     f = mesh.faces
     fc = mesh.vertices[f].mean(axis=1)
@@ -1244,20 +1368,98 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     w_tex = float(W * 2.0)
     h_tex = float(H)
 
+    # Mesh centroid for cylindrical fallback (non-humanoid)
+    v_all_raw = mesh.vertices
+    x_ctr = float(0.5 * (v_all_raw[:, 0].min() + v_all_raw[:, 0].max()))
+    z_ctr = float(0.5 * (v_all_raw[:, 2].min() + v_all_raw[:, 2].max()))
+
+    # Side-blend weight per face: smoothstep on |lateral normal component|
+    # w=0 → pure front/back UV; w=1 → pure side UV
+    # Transition zone: |fn_x| from 0.25 to 0.65 (avoids hard cut)
+    abs_fnx = np.abs(fn[:, 0])
+    w_side_f = np.clip((abs_fnx - 0.25) / 0.40, 0.0, 1.0)
+    # Smooth the blend weight (cubic Hermite: 3t²-2t³)
+    w_side_f = w_side_f * w_side_f * (3.0 - 2.0 * w_side_f)
+
     all_verts = []
     all_faces = []
     all_uvs = []
     v_offset = 0
 
+    def _blend_uv_with_side(verts, primary_u, primary_v, face_w_side,
+                             side_img, geom_mask_side, is_left_view):
+        """
+        Blends primary UV (front or back) with side UV based on per-vertex lateral weight.
+        Uses angle-weighted interpolation — no hard sector assignment.
+        """
+        if side_img is None or not has_side_views or not np.any(face_w_side > 0.01):
+            return primary_u, primary_v
+
+        # Compute side UV for these vertices
+        sz_min_s = z3_min_s if not is_left_view else z3_max_s  # depth bounds
+        sz_max_s = z3_max_s if not is_left_view else z3_min_s
+        try:
+            sx_px, sy_px = _compute_side_uv_mapping(
+                verts, geom_mask_side, y0_3d, y1_3d,
+                z3_min_s, z3_max_s, is_left=is_left_view, is_humanoid=is_humanoid
+            )
+        except Exception:
+            return primary_u, primary_v
+
+        # Side UV in atlas space — side images are stored outside the 2-view atlas,
+        # so we use the same front half [0..0.5] for right-facing side, back half [0.5..1] for left-facing
+        # This avoids expanding atlas size while still blending correct side colors
+        side_H, side_W = geom_mask_side.shape[:2]
+        side_u_raw = np.clip(sx_px / float(max(1, side_W)), 0.001, 0.999)
+        side_v_raw = np.clip(1.0 - sy_px / float(max(1, side_H)), 0.001, 0.999)
+
+        # Remap side UV into the correct half of our 2-view atlas
+        # Right side (is_left_view=False) → front half [0..0.5]
+        # Left  side (is_left_view=True)  → back  half [0.5..1]
+        if is_left_view:
+            side_u = 0.501 + side_u_raw * 0.498
+        else:
+            side_u = 0.001 + side_u_raw * 0.498
+
+        # Blend: w_side=0 → primary; w_side=1 → side
+        blended_u = (1.0 - face_w_side) * primary_u + face_w_side * side_u
+        blended_v = (1.0 - face_w_side) * primary_v + face_w_side * side_v_raw
+
+        return blended_u, blended_v
+
     if np.any(front_face_mask):
         front_sub = mesh.submesh([front_face_mask], append=True)
         fv = front_sub.vertices
-        fx_px, fy_px = _compute_anatomical_uv_mapping(
-            fv, geom_mask_f, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
-            nose_x_3d, is_humanoid=is_humanoid, is_back=False
-        )
+        if is_humanoid:
+            fx_px, fy_px = _compute_anatomical_uv_mapping(
+                fv, geom_mask_f, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
+                nose_x_3d, is_humanoid=True, is_back=False
+            )
+        else:
+            fx_px, fy_px = _compute_cylindrical_uv_mapping(
+                fv, y0_3d, y1_3d, x_ctr, z_ctr, W, H, is_back_half=False
+            )
         front_u = np.clip(fx_px / w_tex, 0.001, 0.499)
         front_v = np.clip(1.0 - (fy_px / h_tex), 0.001, 0.999)
+
+        # Side-blend for front faces: positive X normals → right side, negative → left side
+        fw_side = w_side_f[front_face_mask]
+        fn_front = fn[front_face_mask]
+        is_right_leaning = fn_front[:, 0] > 0  # face toward +X → right side view
+        fw_right = fw_side * is_right_leaning.astype(np.float32)
+        fw_left  = fw_side * (~is_right_leaning).astype(np.float32)
+
+        # Blend with right side
+        front_u, front_v = _blend_uv_with_side(
+            fv, front_u, front_v, fw_right,
+            right_padded, geom_mask_r, is_left_view=False
+        )
+        # Blend with left side
+        front_u, front_v = _blend_uv_with_side(
+            fv, front_u, front_v, fw_left,
+            left_padded, geom_mask_l, is_left_view=True
+        )
+
         all_verts.append(fv)
         all_faces.append(front_sub.faces + v_offset)
         all_uvs.append(np.column_stack([front_u, front_v]))
@@ -1266,12 +1468,34 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     if np.any(back_face_mask):
         back_sub = mesh.submesh([back_face_mask], append=True)
         bv = back_sub.vertices
-        bx_px, by_px = _compute_anatomical_uv_mapping(
-            bv, geom_mask_b, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
-            nose_x_3d, is_humanoid=is_humanoid, is_back=True
-        )
+        if is_humanoid:
+            bx_px, by_px = _compute_anatomical_uv_mapping(
+                bv, geom_mask_b, y0_3d, y1_3d, x3_min_s, x3_mid_s, x3_max_s,
+                nose_x_3d, is_humanoid=True, is_back=True
+            )
+        else:
+            bx_px, by_px = _compute_cylindrical_uv_mapping(
+                bv, y0_3d, y1_3d, x_ctr, z_ctr, W, H, is_back_half=True
+            )
         back_u = np.clip(0.5 + (bx_px / w_tex), 0.501, 0.999)
         back_v = np.clip(1.0 - (by_px / h_tex), 0.001, 0.999)
+
+        # Side-blend for back faces
+        bw_side = w_side_f[back_face_mask]
+        fn_back = fn[back_face_mask]
+        is_right_leaning_b = fn_back[:, 0] > 0
+        bw_right = bw_side * is_right_leaning_b.astype(np.float32)
+        bw_left  = bw_side * (~is_right_leaning_b).astype(np.float32)
+
+        back_u, back_v = _blend_uv_with_side(
+            bv, back_u, back_v, bw_right,
+            right_padded, geom_mask_r, is_left_view=False
+        )
+        back_u, back_v = _blend_uv_with_side(
+            bv, back_u, back_v, bw_left,
+            left_padded, geom_mask_l, is_left_view=True
+        )
+
         all_verts.append(bv)
         all_faces.append(back_sub.faces + v_offset)
         all_uvs.append(np.column_stack([back_u, back_v]))

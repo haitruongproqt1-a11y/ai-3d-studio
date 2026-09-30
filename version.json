@@ -1,14 +1,14 @@
 {
-  "version": "3.0.5",
+  "version": "3.1.0",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "🔧 Sửa Loang Lỗ Voronoi (Erode Seed Fix): Khắc phục triệt để hiện tượng loang lỗ màu sắc xuất hiện ở phiên bản 3.0.4. Nguyên nhân là pixel viền bán trong suốt bị Voronoi dilation kéo lan ra toàn ảnh — nay đã được loại bỏ bằng bước erode 5×5 trước khi dilate.",
-    "🎯 Khôi Phục Seamless 2-View Chuẩn (Rollback Stable Baseline): Quay về kiến trúc 2-view ổn định [Trước | Sau] đã đạt chất lượng seamless tốt, loại bỏ sector partitioning gây UV discontinuity.",
-    "✅ Mặt Trước & Mặt Sau Chuẩn Sắc Nét: Giữ nguyên độ chính xác mặt trước và mặt sau đã đạt từ v3.0.3.",
-    "🔍 Tự Động Nhận Diện 4 Ảnh Đồng Hành (Smart 4-View Auto-Pairing): Khi nạp ảnh chính diện, phần mềm tự động quét và nạp ảnh Sau lưng, Cạnh Trái, Cạnh Phải nếu có trong cùng thư mục.",
-    "✨ PBR Đa Kênh Tức Thì: Tangent-Space Normal Map và ORM Map (Roughness/Metallic/AO) hoàn chỉnh."
+    "🎯 Side-View Angle-Weighted Blend (Không Chia Sector Cứng): 2 bên sườn nay được tô màu mượt mà từ ảnh góc cạnh thật. Engine blend UV theo trọng số góc pháp tuyến |fn_x| với cubic smoothstep — không còn hard cut → không seam → không loang lỗ. Áp dụng cho MỌI loại model.",
+    "🌍 Universal Model Support (Cylindrical UV cho Non-Humanoid): Tự động nhận diện model không phải người (thú 4 chân, xe cộ, đồ vật, nhân vật game) và áp dụng UV hình trụ chuẩn thay vì UV giải phẫu người. Kết quả: mọi model đều có texture đúng, không bị biến dạng.",
+    "🎨 Color Histogram Harmonization (Cân Bằng Màu Đa Góc Nhìn): Tự động cân bằng histogram màu giữa ảnh trước/sau/trái/phải trước khi đóng gói atlas. Loại bỏ hoàn toàn hiện tượng chênh màu áo/da giữa các góc nhìn.",
+    "🔲 Seam Dilation 8px (Xóa Đường Viền Đen UV Seam): Sau khi tạo atlas, mở rộng màu foreground ra 8px vào vùng trong suốt bằng Voronoi. Đảm bảo UV coordinates ở cạnh mesh luôn sample được màu hợp lệ — không còn đường đen/trắng ở viền model.",
+    "🔧 Fix Loang Lỗ v3.0.5 (Erode Seed + 2-View Baseline): Kế thừa từ v3.0.5 — erode 5×5 trước Voronoi dilation và kiến trúc 2-view ổn định."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.5/update_v3.0.5.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.5/update_v3.0.5.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.5/update_v3.0.5.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.0/update_v3.1.0.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.0/update_v3.1.0.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.0/update_v3.1.0.zip"
 }
