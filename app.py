@@ -41,7 +41,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.0.1"
+APP_VERSION = "v3.0.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -325,6 +325,51 @@ def _save_model_metadata(item_dir, name="", engine="RTX Đẳng Cấp (Hunyuan3D
     except Exception as e:
         logging.warning(f"_save_model_metadata error: {e}")
 
+
+def is_texture_blank_white_or_missing(glb_path: str) -> bool:
+    """Detects whether a 3D model is untextured, clay, or has a blank solid white texture."""
+    if not glb_path or not os.path.exists(glb_path):
+        return True
+    try:
+        scene = trimesh.load(glb_path, process=False)
+        base_img = None
+        if isinstance(scene, trimesh.Scene):
+            for g in scene.geometry.values():
+                mat = getattr(getattr(g, 'visual', None), 'material', None)
+                if mat:
+                    base_img = getattr(mat, 'baseColorTexture', None) or getattr(mat, 'image', None)
+                    if base_img is not None:
+                        break
+        elif isinstance(scene, trimesh.Trimesh):
+            mat = getattr(getattr(scene, 'visual', None), 'material', None)
+            if mat:
+                base_img = getattr(mat, 'baseColorTexture', None) or getattr(mat, 'image', None)
+
+        if base_img is None:
+            # Check directory for separate texture file
+            pdir = os.path.dirname(glb_path)
+            for cand in ["texture.png", "input.png", "albedo.png", "texture_4k.png", "material_0.png"]:
+                cp = os.path.join(pdir, cand)
+                if os.path.exists(cp):
+                    base_img = Image.open(cp).convert("RGB")
+                    break
+
+        if base_img is None:
+            return True
+
+        arr = np.array(base_img.convert("RGB"))
+        if arr.size == 0 or (arr.shape[0] <= 4 and arr.shape[1] <= 4):
+            return True
+        if arr.std() < 8.0:
+            return True
+        gray = arr.mean(axis=2)
+        if np.mean(gray > 235) > 0.94:
+            return True
+        return False
+    except Exception:
+        return False
+
+
 # ── AppApi ──────────────────────────────────────────────────────────────────
 class AppApi:
     def __init__(self):
@@ -332,6 +377,7 @@ class AppApi:
         self.last_glb = ""
         self.last_obj = ""
         self.last_folder = OUTPUT_DIR
+        self.last_input_image = ""
         self.config = load_config()
         self.meshy_client = MeshyClient(self.config.get("meshy_api_key", ""))
         self.hf_client = HuggingFaceFreeClient(self.config.get("hf_token", ""))
@@ -747,9 +793,12 @@ class AppApi:
                 if f_ext.lower() not in valid_exts:
                     continue
                 fl = f_base.lower()
+                if any(fl.startswith(ig) for ig in ['texture', 'thumb', 'normal', 'orm', 'material_', 'input_cutout']):
+                    continue
 
                 # Check for back image
-                if any(k in fl for k in ['_back', '-back', 'sau', 'rear', 'lung', '_b']) and (stem.lower() in fl or len(entries) <= 8):
+                is_back_match = (any(k in fl for k in ['_back', '-back', 'sau', 'rear', 'lung']) or fl.endswith('_b') or fl.endswith('-b'))
+                if is_back_match and (stem.lower() in fl or len(entries) <= 8):
                     if res["back"] is None:
                         res["back"] = f_path
                         res["back_filename"] = f
@@ -761,8 +810,10 @@ class AppApi:
                             res["back_data"] = f"data:image/{ext_b};base64,{b64_b}"
                         except Exception:
                             pass
+
                 # Check for side image
-                if any(k in fl for k in ['_side', '-side', 'trai', 'phai', 'left', 'right', 'ben']) and (stem.lower() in fl or len(entries) <= 8):
+                is_side_match = (any(k in fl for k in ['_side', '-side', 'trai', 'phai', 'left', 'right', 'ben']) or fl.endswith('_s') or fl.endswith('-s'))
+                if is_side_match and (stem.lower() in fl or len(entries) <= 8):
                     if res["side"] is None:
                         res["side"] = f_path
         except Exception as e_comp:
@@ -782,6 +833,8 @@ class AppApi:
                 ext = os.path.splitext(fp)[1].lower().lstrip(".")
                 if ext == "jpg":
                     ext = "jpeg"
+                if slot == "front":
+                    self.last_input_image = fp
                 companion = self._find_companion_images(fp) if slot == "front" else {}
                 return {
                     "slot": slot,
@@ -1618,9 +1671,171 @@ class AppApi:
             logging.exception("enhance_texture_4k error")
             return {"success": False, "error": str(e)}
 
-    def auto_perfect_glb_pbr(self, folder=None, task_id=None):
+    def paint_external_model(self, model_path=None, front_image=None, back_image=None,
+                             left_image=None, right_image=None, task_id=None):
+        """
+        Tô màu mô hình 3D (trắng / clay / chưa vân) từ ảnh tham chiếu và hoàn thiện PBR:
+        - Tự động chiếu toạ độ UV giải phẫu không làm biến dạng hình khối
+        - Nướng Texture Atlas 8K Ultra-HD 360° (Mặt trước + Mặt sau)
+        - Phục hồi da bàn tay & khuôn mặt sắc nét, khử lem màu vải
+        - Sinh Normal Map (nếp nhăn 3D) & ORM Metallic-Roughness Map đạt chuẩn Blender
+        """
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        target_model = model_path or self.last_glb
+        if not target_model or not os.path.exists(target_model):
+            if self._window:
+                types = ("3D Model Files (*.glb;*.gltf;*.obj)", "All Files (*.*)")
+                res = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
+                if res and len(res) > 0 and os.path.exists(res[0]):
+                    target_model = res[0]
+            if not target_model or not os.path.exists(target_model):
+                return {"success": False, "error": "Chưa chọn file mô hình 3D để tô màu."}
+
+        target_front = front_image or getattr(self, "last_input_image", None)
+        if not target_front or not os.path.exists(target_front):
+            if self._window:
+                types = ("Image Files (*.png;*.jpg;*.jpeg;*.webp)", "All Files (*.*)")
+                res_img = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
+                if res_img and len(res_img) > 0 and os.path.exists(res_img[0]):
+                    target_front = res_img[0]
+                    self.last_input_image = target_front
+            if not target_front or not os.path.exists(target_front):
+                return {"success": False, "error": "Chưa chọn ảnh đối chiếu (mặt trước) để tô màu mô hình."}
+
+        target_back = back_image
+        if not target_back or not os.path.exists(target_back):
+            comp = self._find_companion_images(target_front)
+            if comp.get("back"):
+                target_back = comp["back"]
+                logging.info(f"Auto-paired companion back image for painting: {target_back}")
+
+        self._progress("📂 Đang nạp mô hình 3D và chuẩn bị cấu trúc hình học...", 15, task_id=task_id)
+        try:
+            raw_mesh = trimesh.load(target_model, process=False)
+            if isinstance(raw_mesh, trimesh.Scene):
+                mesh = trimesh.util.concatenate([g for g in raw_mesh.geometry.values() if isinstance(g, trimesh.Trimesh)])
+            else:
+                mesh = trimesh.Trimesh(vertices=raw_mesh.vertices.copy(), faces=raw_mesh.faces.copy(), process=False)
+        except Exception as e_load:
+            return {"success": False, "error": f"Lỗi đọc file mô hình 3D: {e_load}"}
+
+        # Auto-orient if Z-up (e.g. from Blender OBJ where Z is UP)
+        try:
+            ext = mesh.extents
+            if ext[2] > 1.35 * ext[1] and ext[2] > 1.35 * ext[0]:
+                R = trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0])
+                mesh.apply_transform(R)
+        except Exception:
+            pass
+
+        self._progress("🎨 AI đang chiếu toạ độ UV giải phẫu & nướng vân màu 360° Ultra-HD...", 40, task_id=task_id)
+        try:
+            from texture_engine import bake_meshy_pbr_mesh
+            painted_mesh, atlas_pil = bake_meshy_pbr_mesh(
+                mesh,
+                image_source=target_front,
+                back_image_source=target_back,
+                left_image_source=left_image,
+                right_image_source=right_image,
+                color_mode="color",
+                pbr_preset="auto",
+                preserve_geometry=True
+            )
+        except Exception as e_bake:
+            logging.exception(f"Bake meshy error: {e_bake}")
+            return {"success": False, "error": f"Lỗi nướng texture: {e_bake}"}
+
+        self._progress("✨ Đang tạo bản đồ Normal Map (nếp nhăn 3D) & ORM (kim loại/da mặt/vải)...", 75, task_id=task_id)
+        try:
+            from pbr_perfector import generate_pbr_maps
+            orm_img, normal_img = generate_pbr_maps(
+                atlas_pil,
+                progress_cb=lambda msg, p: self._progress(msg, int(75 + p * 0.15), task_id=task_id)
+            )
+
+            pbr_mat = trimesh.visual.material.PBRMaterial(
+                baseColorTexture=atlas_pil,
+                metallicRoughnessTexture=orm_img,
+                normalTexture=normal_img,
+                metallicFactor=1.0,
+                roughnessFactor=1.0,
+                doubleSided=True
+            )
+            painted_mesh.visual.material = pbr_mat
+        except Exception as e_pbr:
+            logging.exception(f"PBR maps error: {e_pbr}")
+            return {"success": False, "error": f"Lỗi sinh bản đồ PBR: {e_pbr}"}
+
+        self._progress("💾 Đang xuất file GLB/OBJ hoàn thiện PBR...", 92, task_id=task_id)
+        try:
+            timestamp = int(time.time())
+            base_stem = os.path.splitext(os.path.basename(target_model))[0]
+            out_dir = os.path.join(OUTPUT_DIR, f"painted_{timestamp}")
+            os.makedirs(out_dir, exist_ok=True)
+
+            out_glb = os.path.join(out_dir, "model.glb")
+            out_obj = os.path.join(out_dir, "model.obj")
+            painted_mesh.export(out_glb)
+            try:
+                painted_mesh.export(out_obj)
+            except Exception:
+                pass
+
+            try:
+                atlas_pil.save(os.path.join(out_dir, "texture_pbr_base.png"), quality=95)
+                orm_img.save(os.path.join(out_dir, "texture_pbr_orm.png"), quality=95)
+                normal_img.save(os.path.join(out_dir, "texture_pbr_normal.png"), quality=95)
+            except Exception:
+                pass
+
+            _save_model_metadata(
+                out_dir,
+                name=f"{base_stem} (Đã Tô Màu PBR)",
+                engine="Tô Màu Model Ngoài (PBR Studio)",
+                source="image",
+                input_img_path=target_front
+            )
+
+            self.last_glb = out_glb
+            self.last_obj = out_obj
+            self.last_folder = out_dir
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
+            model_url = f"http://127.0.0.1:{_LOCAL_SERVER_PORT}/model.glb?t={int(time.time()*1000)}" if _LOCAL_SERVER_PORT else None
+            fsize = os.path.getsize(out_glb) if os.path.exists(out_glb) else 0
+            glb_data = None
+            if model_url is None or fsize < 12 * 1024 * 1024:
+                try:
+                    with open(out_glb, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    glb_data = f"data:model/gltf-binary;base64,{b64}"
+                except Exception:
+                    pass
+
+            self._progress("✅ Hoàn tất! Mô hình đã được tô màu và phủ vật liệu PBR chuẩn Blender.", 100, task_id=task_id)
+            return {
+                "success": True,
+                "model_url": model_url,
+                "glb_data": glb_data or model_url,
+                "glb_path": out_glb,
+                "obj_path": out_obj,
+                "folder": out_dir,
+                "filename": os.path.basename(out_glb)
+            }
+        except Exception as e_save:
+            logging.exception(f"Save painted model error: {e_save}")
+            return {"success": False, "error": f"Lỗi lưu file mô hình: {e_save}"}
+
+    def auto_perfect_glb_pbr(self, folder=None, task_id=None, front_image=None, back_image=None):
         """
         Tự động hoàn thiện chất liệu PBR chuẩn Studio cho bất kỳ file GLB nào:
+        - Nếu mô hình là khối trắng / chưa vân: tự động dùng ảnh tham chiếu để tô màu & nướng PBR
         - Phục hồi khuôn mặt & làm nét 4K
         - Phân đoạn thông minh da mặt, vải thô, kim loại bóng bẩy
         - Sinh Normal Map (nếp nhăn 3D) và ORM Metallic-Roughness Map
@@ -1646,6 +1861,24 @@ class AppApi:
 
         if not target_path or not os.path.exists(target_path):
             return {"success": False, "error": "Chưa chọn file GLB nào để hoàn thiện PBR."}
+
+        # Check if the model is untextured or solid white clay
+        if is_texture_blank_white_or_missing(target_path):
+            ref_img = front_image or getattr(self, "last_input_image", None)
+            if ref_img and os.path.exists(ref_img):
+                logging.info(f"Target model is untextured. Auto-triggering paint_external_model with {ref_img}")
+                return self.paint_external_model(
+                    model_path=target_path,
+                    front_image=ref_img,
+                    back_image=back_image,
+                    task_id=task_id
+                )
+            else:
+                return {
+                    "success": False,
+                    "is_untextured": True,
+                    "error": "Mô hình này là khối trắng (chưa có vân màu). Vui lòng chọn ảnh đối chiếu để AI tô màu & hoàn thiện PBR."
+                }
 
         try:
             from pbr_perfector import perfect_glb_model
@@ -2356,14 +2589,17 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         <button class="btn-act ready" id="btnImport" onclick="importModel()" title="Nạp file 3D GLB/OBJ từ máy tính">
           📂 Nạp 3D ngoài
         </button>
-        <button class="btn-act ready" id="btnGlb" onclick="doExport('glb')" title="Lưu định dạng GLB">
-          📦 Lưu GLB
-        </button>
-        <button class="btn-act ready" id="btnEnhance4k" onclick="doEnhance4k()" title="Nâng cấp Texture lên 4K bằng Real-ESRGAN & Phục hồi khuôn mặt sắc nét" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:#a855f7">
-          ✨ Nâng Cấp Texture 4K (AI)
+        <button class="btn-act ready" id="btnPaintModel" onclick="doPaintModelFromImage()" title="Tô màu mô hình 3D (trắng/clay) từ ảnh tham chiếu và hoàn thiện PBR chuẩn Blender" style="background:linear-gradient(135deg,#0284c7,#059669);color:#fff;border-color:#38bdf8;font-weight:700">
+          🎨 Tô Màu Từ Ảnh (PBR)
         </button>
         <button class="btn-act ready" id="btnAutoPbr" onclick="doAutoPbr()" title="Tự động kiến tạo chất liệu PBR chuẩn Blender: Da mặt ẩm mịn, vải thô nhám, kim loại phản quang và nếp nhăn 3D" style="background:linear-gradient(135deg,#059669,#10b981);color:#fff;border-color:#34d399;font-weight:700">
-          🎨 Hoàn Thiện PBR (Blender)
+          ✨ Hoàn Thiện PBR (Blender)
+        </button>
+        <button class="btn-act ready" id="btnEnhance4k" onclick="doEnhance4k()" title="Nâng cấp Texture lên 4K bằng Real-ESRGAN & Phục hồi khuôn mặt sắc nét" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:#a855f7">
+          🚀 Nâng Cấp Texture 4K (AI)
+        </button>
+        <button class="btn-act ready" id="btnGlb" onclick="doExport('glb')" title="Lưu định dạng GLB">
+          📦 Lưu GLB
         </button>
         <button class="btn-act ready" id="btnObj" onclick="doExport('obj')" title="Lưu định dạng OBJ cho Blender/Maya">
           📦 Lưu OBJ
@@ -3133,6 +3369,78 @@ async function doEnhance4k() {
   }
 }
 
+async function doPaintModelFromImage() {
+  const mv = document.getElementById('mv');
+  const hasModel = (mv && mv.style.display !== 'none' && (mv.src || lastGlbData));
+  if (!hasModel) {
+    window._setProgress('📂 Đang mở hộp thoại chọn mô hình 3D cần tô màu...', -1);
+    const rModel = await window.pywebview.api.load_external_model();
+    if (!rModel || !rModel.success) {
+      window._setProgress('Đã hủy chọn mô hình 3D.', -1);
+      return;
+    }
+    lastFolder = rModel.folder;
+    const src = rModel.model_url || rModel.glb_data;
+    mv.src = src;
+    lastGlbData = src;
+    mv.style.display = 'block';
+    mv.setAttribute('camera-orbit', '0deg 75deg 105%');
+    mv.setAttribute('camera-target', 'auto auto auto');
+    mv.setAttribute('field-of-view', 'auto');
+    mv.dismissPoster?.();
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('hint').style.display = 'block';
+  }
+
+  let frontImg = (curViewMode === 'multi') ? (multiImgs.front || imgPath) : imgPath;
+  let backImg = (curViewMode === 'multi') ? multiImgs.back : null;
+  let leftImg = (curViewMode === 'multi') ? multiImgs.left : null;
+  let rightImg = (curViewMode === 'multi') ? multiImgs.right : null;
+
+  if (!frontImg) {
+    window._setProgress('📸 Vui lòng chọn ảnh đối chiếu (mặt trước) để AI tô màu...', -1);
+    await pickImage();
+    frontImg = imgPath;
+    if (multiImgs && multiImgs.back) {
+      backImg = multiImgs.back;
+    }
+    if (!frontImg) {
+      window._setProgress('Đã hủy chọn ảnh tham chiếu.', -1);
+      return;
+    }
+  }
+
+  const btn = document.getElementById('btnPaintModel');
+  if (btn) btn.disabled = true;
+  window._setProgress('🎨 Đang phân tích mô hình & chuẩn bị chiếu toạ độ ảnh...', 15);
+
+  try {
+    const res = await window.pywebview.api.paint_external_model(
+      null,
+      frontImg,
+      backImg,
+      leftImg,
+      rightImg
+    );
+
+    if (res && res.success) {
+      const newSrc = res.model_url || res.glb_data;
+      if (newSrc) {
+        mv.src = newSrc;
+        lastGlbData = newSrc;
+        lastFolder = res.folder;
+      }
+      window._setProgress('✅ Hoàn tất! Mô hình 3D đã được tô màu 360° và phủ vật liệu PBR chuẩn Blender.', 100);
+    } else {
+      window._setProgress('❌ ' + (res ? res.error : 'Lỗi tô màu mô hình'), -1);
+    }
+  } catch (e) {
+    window._setProgress('❌ Lỗi: ' + e, -1);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function doAutoPbr() {
   const mv = document.getElementById('mv');
   if (!mv || mv.style.display === 'none') {
@@ -3143,13 +3451,19 @@ async function doAutoPbr() {
   if (btn) btn.disabled = true;
   window._setProgress('🎨 Đang phân tích vật liệu PBR (Vải, Da mặt, Kim loại, Normal Map)…', 15);
   try {
-    const res = await window.pywebview.api.auto_perfect_glb_pbr();
+    const effectiveFront = (curViewMode === 'multi') ? (multiImgs.front || imgPath) : imgPath;
+    const effectiveBack = (curViewMode === 'multi') ? multiImgs.back : null;
+    const res = await window.pywebview.api.auto_perfect_glb_pbr(null, null, effectiveFront, effectiveBack);
     if (res && res.success) {
-      if (res.glb_data) {
-        mv.src = res.glb_data;
-        lastGlbData = res.glb_data;
+      const newSrc = res.model_url || res.glb_data;
+      if (newSrc) {
+        mv.src = newSrc;
+        lastGlbData = newSrc;
       }
       window._setProgress('✅ Hoàn tất! Mô hình đã được phủ bộ vật liệu PBR chuẩn Blender (Normal + Kim loại + Da mặt).', 100);
+    } else if (res && res.is_untextured) {
+      window._setProgress('💡 Mô hình là khối trắng. Đang chuyển sang chế độ Tô Màu & PBR từ ảnh...', 25);
+      await doPaintModelFromImage();
     } else {
       window._setProgress('❌ ' + (res ? res.error : 'Lỗi hoàn thiện PBR'), -1);
     }
@@ -3366,7 +3680,7 @@ async function importModel() {
     mv.dismissPoster?.();
     document.getElementById('empty').style.display = 'none';
     document.getElementById('hint').style.display = 'block';
-    window._setProgress('✅ Đã nạp thành công mô hình: ' + r.filename + ' – Sẵn sàng xoay 360°, hoàn thiện PBR hoặc xuất file!', 100);
+    window._setProgress('✅ Đã nạp thành công mô hình: ' + r.filename + ' – Bấm [🎨 Tô Màu Từ Ảnh] hoặc [Hoàn Thiện PBR] để nướng vật liệu!', 100);
   } else if (r && r.error) {
     window._setProgress('❌ ' + r.error, -1);
   } else {

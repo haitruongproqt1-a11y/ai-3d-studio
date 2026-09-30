@@ -905,16 +905,21 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
                         left_image_source=None, right_image_source=None,
                         color_mode="color", pbr_preset="auto",
                         metallic_override=None, roughness_override=None,
-                        auto_sync_textures=True):
+                        auto_sync_textures=True,
+                        preserve_geometry=False):
     """
     Applies Zero-Distortion High-Poly 3D Relief Sculpting and UV-Space Anatomical 8K Ultra-HD PBR Texture (8192px)
     with 360° Multi-View Seam Harmonization and Direct-to-PBR Material Presets.
+    When preserve_geometry is True, preserves input mesh geometry exactly without deformation.
     """
 
     if isinstance(mesh, trimesh.Scene):
         mesh = trimesh.util.concatenate([g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)])
     else:
-        mesh = mesh.copy()
+        try:
+            mesh = mesh.copy()
+        except Exception:
+            mesh = trimesh.Trimesh(vertices=mesh.vertices.copy(), faces=mesh.faces.copy(), process=False)
 
     try:
         mesh.merge_vertices(merge_tex=True, merge_norm=True)
@@ -939,49 +944,51 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
 
     # 2. Frame Calibration (Precise 1:1 Aspect Ratio Alignment)
     # Calibrates 3D mesh width and depth to match photo foreground silhouette, eliminating squatting/stretching.
-    try:
-        coords_geom = np.nonzero(geom_mask_f)
-        if len(coords_geom[0]) > 50:
-            h_2d_fg = float(coords_geom[0].max() - coords_geom[0].min())
-            w_2d_fg = float(coords_geom[1].max() - coords_geom[1].min())
-            if w_2d_fg > 10 and h_2d_fg > 10:
-                ratio_2d = h_2d_fg / w_2d_fg
-                ext_3d = mesh.extents
-                h_3d_box = float(ext_3d[1])
-                w_3d_box = float(ext_3d[0])
-                if w_3d_box > 1e-4:
-                    ratio_3d = h_3d_box / w_3d_box
-                    sx = np.clip(ratio_3d / ratio_2d, 0.72, 1.35)
-                    if abs(sx - 1.0) > 0.015:
-                        logging.info(f"Frame Aspect Calibration: 2D={ratio_2d:.3f}, 3D={ratio_3d:.3f} -> scale_x={sx:.4f}")
-                        v_cal = mesh.vertices.copy()
-                        x_center = float(np.median(v_cal[:, 0]))
-                        v_cal[:, 0] = x_center + (v_cal[:, 0] - x_center) * sx
-                        sz = float(np.clip(np.sqrt(sx), 0.85, 1.18))
-                        z_center = float(np.median(v_cal[:, 2]))
-                        v_cal[:, 2] = z_center + (v_cal[:, 2] - z_center) * sz
-                        mesh.vertices = v_cal
-    except Exception as e_calib:
-        logging.warning(f"Frame calibration notice: {e_calib}")
+    if not preserve_geometry:
+        try:
+            coords_geom = np.nonzero(geom_mask_f)
+            if len(coords_geom[0]) > 50:
+                h_2d_fg = float(coords_geom[0].max() - coords_geom[0].min())
+                w_2d_fg = float(coords_geom[1].max() - coords_geom[1].min())
+                if w_2d_fg > 10 and h_2d_fg > 10:
+                    ratio_2d = h_2d_fg / w_2d_fg
+                    ext_3d = mesh.extents
+                    h_3d_box = float(ext_3d[1])
+                    w_3d_box = float(ext_3d[0])
+                    if w_3d_box > 1e-4:
+                        ratio_3d = h_3d_box / w_3d_box
+                        sx = np.clip(ratio_3d / ratio_2d, 0.72, 1.35)
+                        if abs(sx - 1.0) > 0.015:
+                            logging.info(f"Frame Aspect Calibration: 2D={ratio_2d:.3f}, 3D={ratio_3d:.3f} -> scale_x={sx:.4f}")
+                            v_cal = mesh.vertices.copy()
+                            x_center = float(np.median(v_cal[:, 0]))
+                            v_cal[:, 0] = x_center + (v_cal[:, 0] - x_center) * sx
+                            sz = float(np.clip(np.sqrt(sx), 0.85, 1.18))
+                            z_center = float(np.median(v_cal[:, 2]))
+                            v_cal[:, 2] = z_center + (v_cal[:, 2] - z_center) * sz
+                            mesh.vertices = v_cal
+        except Exception as e_calib:
+            logging.warning(f"Frame calibration notice: {e_calib}")
 
     # 3. Pre-Subdivision Taubin Voxel Staircase Removal + Ultra 4K Subdivision (~556K faces)
-    try:
-        filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=8)
-    except Exception as e:
-        logging.warning(f"Taubin pre-smoothing notice: {e}")
-
-    if len(mesh.faces) < 250000:
+    if not preserve_geometry:
         try:
-            mesh = mesh.subdivide()
-            logging.info(f"Subdivided mesh to Ultra 4K topology: {len(mesh.faces)} faces, {len(mesh.vertices)} vertices")
+            filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=8)
         except Exception as e:
-            logging.warning(f"Mesh subdivision notice: {e}")
+            logging.warning(f"Taubin pre-smoothing notice: {e}")
 
-    # Post-subdivision Taubin: smooth out subdivision staircase artifacts
-    try:
-        filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=6)
-    except Exception:
-        pass
+        if len(mesh.faces) < 250000:
+            try:
+                mesh = mesh.subdivide()
+                logging.info(f"Subdivided mesh to Ultra 4K topology: {len(mesh.faces)} faces, {len(mesh.vertices)} vertices")
+            except Exception as e:
+                logging.warning(f"Mesh subdivision notice: {e}")
+
+        # Post-subdivision Taubin: smooth out subdivision staircase artifacts
+        try:
+            filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=6)
+        except Exception:
+            pass
 
     # 4. Compute 3D Slice Profiles on the Calibrated Subdivided Mesh
     v = mesh.vertices.copy()
@@ -1050,24 +1057,25 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
 
     relief_combined = (0.50 * g_fine + 0.35 * g_mid + 0.15 * g_broad) * bilateral_w * edge_taper
 
-    # Gaussian blur on relief map (sigma=1.5) — smooths displacement, prevents prickling
-    relief_2d = ndi.gaussian_filter(np.clip(relief_combined, -0.20, 0.20), sigma=1.5)
+    if not preserve_geometry:
+        # Gaussian blur on relief map (sigma=1.5) — smooths displacement, prevents prickling
+        relief_2d = ndi.gaussian_filter(np.clip(relief_combined, -0.20, 0.20), sigma=1.5)
 
-    sampled_relief = ndi.map_coordinates(relief_2d, [fy_all, fx_all], order=1, mode="nearest")
-    v_zmin = np.interp(s_3d, s_grid, z3_min_s)
-    v_zmax = np.interp(s_3d, s_grid, z3_max_s)
-    v_z_rel = np.clip((v[:, 2] - v_zmin) / np.maximum(0.05, v_zmax - v_zmin), 0.0, 1.0)
-    front_w = np.clip((vn[:, 2] - 0.15) / 0.42, 0.0, 1.0) * np.clip((v_z_rel - 0.32) / 0.22, 0.0, 1.0)
+        sampled_relief = ndi.map_coordinates(relief_2d, [fy_all, fx_all], order=1, mode="nearest")
+        v_zmin = np.interp(s_3d, s_grid, z3_min_s)
+        v_zmax = np.interp(s_3d, s_grid, z3_max_s)
+        v_z_rel = np.clip((v[:, 2] - v_zmin) / np.maximum(0.05, v_zmax - v_zmin), 0.0, 1.0)
+        front_w = np.clip((vn[:, 2] - 0.15) / 0.42, 0.0, 1.0) * np.clip((v_z_rel - 0.32) / 0.22, 0.0, 1.0)
 
-    # Balanced displacement amplitude: enough for cloth creases + buttons, not rough
-    disp_amp = 0.010 * h_3d
-    mesh.vertices = v + ((sampled_relief * front_w * disp_amp)[:, None] * vn)
+        # Balanced displacement amplitude: enough for cloth creases + buttons, not rough
+        disp_amp = 0.010 * h_3d
+        mesh.vertices = v + ((sampled_relief * front_w * disp_amp)[:, None] * vn)
 
-    # Strong post-sculpt Taubin to iron out any remaining roughness
-    try:
-        filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=8)
-    except Exception:
-        pass
+        # Strong post-sculpt Taubin to iron out any remaining roughness
+        try:
+            filter_taubin(mesh, lamb=0.45, nu=-0.48, iterations=8)
+        except Exception:
+            pass
 
     if color_mode == "clay":
         return create_clay_sculpture_mesh(mesh), None

@@ -1,13 +1,14 @@
 {
-  "version": "3.0.1",
+  "version": "3.0.2",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "🚀 Nạp 3D Ngoài Siêu Mượt (Loopback HTTP Streaming): Khắc phục triệt để hiện tượng đơ/lag giao diện khi mở file GLB/OBJ lớn. Mô hình được stream trực tiếp qua luồng bộ đệm 0.01s, tự động căn giữa khung nhìn camera và đồng bộ mọi nút chức năng (Hoàn thiện PBR, Nâng cấp 4K, Xuất file).",
-    "📸 Tự Động Kết Nối & Tô Màu 360° Mặt Trước - Mặt Sau: Tự động nhận diện ảnh mặt sau (companion back) trong cùng thư mục khi chọn ảnh chính diện. Giữ nguyên 100% độ sắc nét và chi tiết thực của ảnh lưng, khắc phục hoàn toàn lỗi lưng bị tô lặp theo mặt trước.",
-    "✋ Khử Triệt Để Màu Xanh Bàn Tay (Phục Hồi Màu Da & Chi Tiết 3D): Nâng cấp thuật toán UV dải biên độ cho dáng T-pose/A-pose. Tự động nhận diện bàn tay và thay thế triệt để màu vải quân phục xanh lem bằng sắc da người tự nhiên, ấm mịn và rõ ràng.",
-    "🎨 Hoàn Thiện PBR Chuẩn Blender Tự Động Khử Nhựa & Tô Bàn Tay: Nút 'Hoàn Thiện PBR' nay tích hợp bộ lọc phục hồi da bàn tay và nướng bản đồ Normal Map + ORM chân thực đạt chuẩn AAA cho mọi mô hình ngoài và nội bộ."
+    "🎨 Tô Màu & Nướng PBR Cho Mô Hình Trắng/Clay Từ Ảnh Tham Chiếu: Cho phép nạp bất kỳ mô hình 3D trắng, tượng thạch cao, clay sculpt (từ Hunyuan, Tripo, ZBrush, Blender...), sau đó nạp ảnh 2D đối chiếu (mặt trước & mặt sau) để AI tự động chiếu toạ độ UV giải phẫu và nướng toàn bộ Texture Atlas 8K Ultra-HD.",
+    "🛡️ Bảo Toàn 100% Cấu Trúc Khối Gốc (Preserve Geometry): Thuật toán chiếu UV thông minh không làm biến dạng tỷ lệ khung xương, không làm móp méo chi tiết điêu khắc sẵn có của mô hình trắng.",
+    "✨ Hoàn Thiện PBR Đa Kênh Tự Động: Tự động phân đoạn chất liệu vải, da mặt, kim loại; nướng Tangent-Space Normal Map (nếp nhăn 3D) và ORM Map (Roughness/Metallic/AO) chuẩn điện ảnh Blender glTF 2.0.",
+    "✋ Khử Lem Màu Xanh Bàn Tay: Tự động nhận diện bàn tay và tái tạo sắc tố da người tự nhiên, ấm mịn, xoá bỏ hoàn toàn vệt màu xanh quân phục.",
+    "🚀 Nút Thao Tác Trực Quan [🎨 Tô Màu Từ Ảnh (PBR)] & Tự Động Chuyển Hướng Thông Minh: Tích hợp nút thao tác trực tiếp trên thanh công cụ và tự động nhận diện mô hình trắng khi bấm [Hoàn Thiện PBR] để hỗ trợ người dùng ngay tức thì."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.1/update_v3.0.1.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.1/update_v3.0.1.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.1/update_v3.0.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.2/update_v3.0.2.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.2/update_v3.0.2.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.2/update_v3.0.2.zip"
 }
