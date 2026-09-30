@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.error
 import socket
 import gc
+import http.server
 
 # Ensure portable cache paths on SSD H: are ALWAYS set FIRST before importing torch/TSR!
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -40,13 +41,65 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.0.0"
+APP_VERSION = "v3.0.1"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 HUNYUAN_MODEL_DIR = os.path.join(CACHE_DIR, "hy3dgen", "tencent", "Hunyuan3D-2mini", "hunyuan3d-dit-v2-mini-turbo")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(HUNYUAN_MODEL_DIR, exist_ok=True)
+
+_LOCAL_SERVER_PORT = None
+
+
+class _LocalModelServer(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(parsed.query)
+            target_file = None
+            if parsed.path.startswith("/model.glb") or parsed.path == "/":
+                if hasattr(self.server, "api_instance") and self.server.api_instance.last_glb:
+                    target_file = self.server.api_instance.last_glb
+            elif "file" in q:
+                target_file = q["file"][0]
+
+            if target_file and os.path.exists(target_file):
+                fsize = os.path.getsize(target_file)
+                self.send_response(200)
+                self.send_header("Content-Type", "model/gltf-binary")
+                self.send_header("Content-Length", str(fsize))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.end_headers()
+                with open(target_file, "rb") as f:
+                    shutil.copyfileobj(f, self.wfile, length=128 * 1024)
+            else:
+                self.send_response(404)
+                self.end_headers()
+        except Exception:
+            pass
+
+
+def start_local_model_server(api_instance):
+    global _LOCAL_SERVER_PORT
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), _LocalModelServer)
+        server.api_instance = api_instance
+        _LOCAL_SERVER_PORT = port
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        logging.info(f"Local 3D streaming server running on http://127.0.0.1:{port}")
+    except Exception as e:
+        logging.warning(f"Could not start local model server: {e}")
+
 
 # ── Hardware Detection ──────────────────────────────────────────────────────
 def detect_hardware():
@@ -669,6 +722,53 @@ class AppApi:
             logging.exception("split_and_load_grid_image error")
             return {"success": False, "error": str(e)}
 
+    def _find_companion_images(self, file_path):
+        if not file_path or not os.path.isfile(file_path):
+            return {"back": None, "side": None, "back_data": None, "back_filename": None}
+        folder = os.path.dirname(file_path)
+        fname = os.path.basename(file_path)
+        base, _ = os.path.splitext(fname)
+
+        stem = base
+        for sfx in ['_front', '-front', '_f', '-f', '_truoc', '-truoc', '_chinhdien', '-chinhdien', '_front_view']:
+            if stem.lower().endswith(sfx):
+                stem = stem[:len(stem)-len(sfx)]
+                break
+
+        res = {"back": None, "side": None, "back_data": None, "back_filename": None}
+        valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        try:
+            entries = os.listdir(folder)
+            for f in entries:
+                f_path = os.path.join(folder, f)
+                if not os.path.isfile(f_path) or os.path.abspath(f_path) == os.path.abspath(file_path):
+                    continue
+                f_base, f_ext = os.path.splitext(f)
+                if f_ext.lower() not in valid_exts:
+                    continue
+                fl = f_base.lower()
+
+                # Check for back image
+                if any(k in fl for k in ['_back', '-back', 'sau', 'rear', 'lung', '_b']) and (stem.lower() in fl or len(entries) <= 8):
+                    if res["back"] is None:
+                        res["back"] = f_path
+                        res["back_filename"] = f
+                        try:
+                            with open(f_path, "rb") as bf:
+                                b64_b = base64.b64encode(bf.read()).decode()
+                            ext_b = f_ext.lower().lstrip(".")
+                            if ext_b == "jpg": ext_b = "jpeg"
+                            res["back_data"] = f"data:image/{ext_b};base64,{b64_b}"
+                        except Exception:
+                            pass
+                # Check for side image
+                if any(k in fl for k in ['_side', '-side', 'trai', 'phai', 'left', 'right', 'ben']) and (stem.lower() in fl or len(entries) <= 8):
+                    if res["side"] is None:
+                        res["side"] = f_path
+        except Exception as e_comp:
+            logging.warning(f"Error finding companion images: {e_comp}")
+        return res
+
     def select_multi_image(self, slot="front"):
         if not self._window:
             return None
@@ -682,7 +782,14 @@ class AppApi:
                 ext = os.path.splitext(fp)[1].lower().lstrip(".")
                 if ext == "jpg":
                     ext = "jpeg"
-                return {"slot": slot, "path": fp, "dataUrl": f"data:image/{ext};base64,{b64}", "name": os.path.basename(fp)}
+                companion = self._find_companion_images(fp) if slot == "front" else {}
+                return {
+                    "slot": slot,
+                    "path": fp,
+                    "dataUrl": f"data:image/{ext};base64,{b64}",
+                    "name": os.path.basename(fp),
+                    "companion": companion
+                }
             except Exception as e:
                 return {"slot": slot, "error": str(e)}
         return None
@@ -935,6 +1042,16 @@ class AppApi:
                     num_steps=10, octree_res=160,
                     back_image=None, left_image=None, right_image=None,
                     color_mode="color", task_id=None):
+        # Auto-pair companion back and side views if present in the same directory
+        if file_path and os.path.isfile(file_path):
+            companion = self._find_companion_images(file_path)
+            if back_image is None and companion.get("back"):
+                back_image = companion["back"]
+                logging.info(f"Auto-paired companion back image: {back_image}")
+            if left_image is None and companion.get("side"):
+                left_image = companion["side"]
+                logging.info(f"Auto-paired companion side image: {left_image}")
+
         if engine == "meshy":
             return self._gen_meshy_cloud(file_path, enable_pbr=(color_mode != "clay"), color_mode=color_mode, task_id=task_id)
         if engine == "hffree":
@@ -1049,12 +1166,21 @@ class AppApi:
             )
 
             self._progress("✅ Hoàn tất! Mô hình 3D sẵn sàng.", 100, task_id=task_id)
-            with open(glb_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
+            model_url = f"http://127.0.0.1:{_LOCAL_SERVER_PORT}/model.glb?t={int(time.time()*1000)}" if _LOCAL_SERVER_PORT else None
+            fsize = os.path.getsize(glb_path) if os.path.exists(glb_path) else 0
+            glb_data = None
+            if model_url is None or fsize < 12 * 1024 * 1024:
+                try:
+                    with open(glb_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    glb_data = f"data:model/gltf-binary;base64,{b64}"
+                except Exception:
+                    pass
 
             return {
                 "success": True,
-                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_data": glb_data or model_url,
+                "model_url": model_url,
                 "glb_path": glb_path,
                 "obj_path": obj_path,
                 "folder": item_dir,
@@ -1191,13 +1317,21 @@ class AppApi:
                 input_img_path=file_path
             )
 
-            self._progress("✅ Hoàn tất! Mô hình 3D Hunyuan Turbo sẵn sàng (100%).", 100, task_id=task_id)
-            with open(glb_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
+            model_url = f"http://127.0.0.1:{_LOCAL_SERVER_PORT}/model.glb?t={int(time.time()*1000)}" if _LOCAL_SERVER_PORT else None
+            fsize = os.path.getsize(glb_path) if os.path.exists(glb_path) else 0
+            glb_data = None
+            if model_url is None or fsize < 12 * 1024 * 1024:
+                try:
+                    with open(glb_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    glb_data = f"data:model/gltf-binary;base64,{b64}"
+                except Exception:
+                    pass
 
             return {
                 "success": True,
-                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_data": glb_data or model_url,
+                "model_url": model_url,
                 "glb_path": glb_path,
                 "obj_path": obj_path,
                 "folder": item_dir,
@@ -1528,9 +1662,18 @@ class AppApi:
 
             if res.get("success"):
                 out_p = res.get("glb_path", target_path)
-                with open(out_p, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                res["glb_data"] = f"data:model/gltf-binary;base64,{b64}"
+                model_url = f"http://127.0.0.1:{_LOCAL_SERVER_PORT}/model.glb?t={int(time.time()*1000)}" if _LOCAL_SERVER_PORT else None
+                fsize = os.path.getsize(out_p) if os.path.exists(out_p) else 0
+                glb_data = None
+                if model_url is None or fsize < 12 * 1024 * 1024:
+                    try:
+                        with open(out_p, "rb") as f:
+                            b64 = base64.b64encode(f.read()).decode()
+                        glb_data = f"data:model/gltf-binary;base64,{b64}"
+                    except Exception:
+                        pass
+                res["glb_data"] = glb_data or model_url
+                res["model_url"] = model_url
                 self.last_glb = out_p
                 self.last_folder = os.path.dirname(out_p)
 
@@ -1603,33 +1746,45 @@ class AppApi:
                 obj_cand = os.path.splitext(fp)[0] + ".obj"
                 if os.path.exists(obj_cand):
                     local_obj = obj_cand
-                with open(fp, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                glb_data = f"data:model/gltf-binary;base64,{b64}"
             elif ext in (".obj", ".gltf"):
-                m = trimesh.load(fp)
+                self._progress("⏳ Đang nạp và tối ưu định dạng mô hình 3D...", 30)
+                m = trimesh.load(fp, process=False)
                 temp_glb = os.path.join(OUTPUT_DIR, "imported_temp.glb")
                 m.export(temp_glb)
                 local_glb = temp_glb
                 local_obj = fp
-                with open(temp_glb, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                glb_data = f"data:model/gltf-binary;base64,{b64}"
             else:
                 return {"success": False, "error": "Định dạng không hỗ trợ. Vui lòng chọn file .glb hoặc .obj"}
 
             self.last_glb = local_glb
             self.last_obj = local_obj or local_glb
             self.last_folder = item_dir
+
+            # Instant streaming URL over loopback server (zero IPC serialization lag!)
+            model_url = f"http://127.0.0.1:{_LOCAL_SERVER_PORT}/model.glb?t={int(time.time()*1000)}" if _LOCAL_SERVER_PORT else None
+
+            # Fallback data URL only if local HTTP server is unavailable or file < 12MB
+            glb_data = None
+            fsize = os.path.getsize(local_glb) if os.path.exists(local_glb) else 0
+            if model_url is None or fsize < 12 * 1024 * 1024:
+                try:
+                    with open(local_glb, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    glb_data = f"data:model/gltf-binary;base64,{b64}"
+                except Exception:
+                    pass
+
             return {
                 "success": True,
-                "glb_data": glb_data,
+                "model_url": model_url,
+                "glb_data": glb_data or model_url,
                 "glb_path": local_glb,
                 "obj_path": self.last_obj,
                 "folder": item_dir,
                 "filename": os.path.basename(fp)
             }
         except Exception as e:
+            logging.exception(f"load_external_model error: {e}")
             return {"success": False, "error": f"Không thể đọc file 3D: {e}"}
 
     def open_external_url(self, url):
@@ -2619,6 +2774,19 @@ async function pickMultiSlot(slot) {
         prevSingle.style.display = 'block';
       }
       if (dropHint) dropHint.style.display = 'none';
+
+      // Auto-populate companion back/side if found in the same folder
+      if (r.companion && r.companion.back) {
+        multiImgs.back = r.companion.back;
+        const pB = document.getElementById('mvPrevBack');
+        const hB = document.getElementById('mvHintBack');
+        if (pB && r.companion.back_data) {
+          pB.src = r.companion.back_data;
+          pB.style.display = 'block';
+        }
+        if (hB) hB.style.display = 'none';
+        window._setProgress('💡 Đã tự động nhận diện ảnh Mặt Sau (' + (r.companion.back_filename || '') + ') để tô màu 360°!', -1);
+      }
     }
     const cap = slot.charAt(0).toUpperCase() + slot.slice(1);
     const p = document.getElementById('mvPrev' + cap);
@@ -2628,7 +2796,9 @@ async function pickMultiSlot(slot) {
       p.style.display = 'block';
     }
     if (h) h.style.display = 'none';
-    window._setProgress('✓ Đã nạp ' + (slotNameMap[slot] || slot) + ': ' + r.name, -1);
+    if (!(slot === 'front' && r.companion && r.companion.back)) {
+      window._setProgress('✓ Đã nạp ' + (slotNameMap[slot] || slot) + ': ' + r.name, -1);
+    }
   } else {
     window._setProgress('Chưa chọn ảnh cho ' + (slotNameMap[slot] || slot) + '.', -1);
   }
@@ -2892,7 +3062,19 @@ async function pickImage() {
     }
     if (hF) hF.style.display = 'none';
 
-    window._setProgress('Đã chọn: ' + r.name + ' – Nhấn nút Bắt đầu tạo 3D!', -1);
+    if (r.companion && r.companion.back) {
+      multiImgs.back = r.companion.back;
+      const pB = document.getElementById('mvPrevBack');
+      const hB = document.getElementById('mvHintBack');
+      if (pB && r.companion.back_data) {
+        pB.src = r.companion.back_data;
+        pB.style.display = 'block';
+      }
+      if (hB) hB.style.display = 'none';
+      window._setProgress('💡 Đã tự động nhận diện ảnh Mặt Sau (' + (r.companion.back_filename || '') + ') để tô màu 360° chuẩn xác!', -1);
+    } else {
+      window._setProgress('Đã chọn: ' + (r.name || r.path.split(/[/\\]/).pop()) + ' – Nhấn nút Bắt đầu tạo 3D!', -1);
+    }
   } else {
     window._setProgress('Chưa chọn ảnh.', -1);
   }
@@ -3169,16 +3351,22 @@ async function openDir() {
 }
 
 async function importModel() {
-  window._setProgress('Đang mở hộp thoại nạp file 3D (GLB/OBJ)…', -1);
+  window._setProgress('⏳ Đang mở hộp thoại chọn tệp 3D (GLB/OBJ)...', -1);
   const r = await window.pywebview.api.load_external_model();
   if (r && r.success) {
     lastFolder = r.folder;
     const mv = document.getElementById('mv');
-    mv.src = r.glb_data;
+    const src = r.model_url || r.glb_data;
+    mv.src = src;
+    lastGlbData = src;
     mv.style.display = 'block';
+    mv.setAttribute('camera-orbit', '0deg 75deg 105%');
+    mv.setAttribute('camera-target', 'auto auto auto');
+    mv.setAttribute('field-of-view', 'auto');
+    mv.dismissPoster?.();
     document.getElementById('empty').style.display = 'none';
     document.getElementById('hint').style.display = 'block';
-    window._setProgress('✅ Đã nạp thành công mô hình: ' + r.filename + ' – Sẵn sàng lưu GLB / OBJ!', 100);
+    window._setProgress('✅ Đã nạp thành công mô hình: ' + r.filename + ' – Sẵn sàng xoay 360°, hoàn thiện PBR hoặc xuất file!', 100);
   } else if (r && r.error) {
     window._setProgress('❌ ' + r.error, -1);
   } else {
@@ -3457,6 +3645,7 @@ function openMixamoWeb() {
 
 def main():
     api = AppApi()
+    start_local_model_server(api)
     window = webview.create_window(
         title=f"AI 3D Studio {APP_VERSION}",
         html=HTML,

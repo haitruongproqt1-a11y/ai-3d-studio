@@ -42,7 +42,8 @@ def voronoi_pad(img_rgb, mask):
 
 def _is_humanoid_portrait(img_rgb, mask):
     """
-    Detects whether the foreground subject is a standing humanoid character/portrait.
+    Detects whether the foreground subject is a humanoid character (standing portrait, A-pose, or T-pose).
+    Supports characters wearing helmets/hats and characters with outstretched horizontal arms.
     """
     coords = np.nonzero(mask)
     if len(coords[0]) < 100:
@@ -51,17 +52,39 @@ def _is_humanoid_portrait(img_rgb, mask):
     x0, x1 = int(coords[1].min()), int(coords[1].max())
     h_fg = float(max(1, y1 - y0))
     w_fg = float(max(1, x1 - x0))
-    if (h_fg / w_fg) < 1.35:
+    aspect = h_fg / w_fg
+    if aspect < 0.65:
         return False
 
-    y_cheek0, y_cheek1 = int(y0 + 0.045 * h_fg), int(y0 + 0.115 * h_fg)
-    cheek_region = img_rgb[y_cheek0:y_cheek1, :]
-    cheek_mask = mask[y_cheek0:y_cheek1, :]
-    if not np.any(cheek_mask):
+    # Check for skin pixels across upper body [0.03*h_fg .. 0.45*h_fg] (face, neck, or hands)
+    upper_mask = mask.copy()
+    upper_mask[int(y0 + 0.45 * h_fg):, :] = False
+    upper_mask[:int(y0 + 0.03 * h_fg), :] = False
+    if not np.any(upper_mask):
         return False
-    cheek_pixels = cheek_region[cheek_mask]
-    skin_candidates = cheek_pixels[(cheek_pixels[:, 0] > cheek_pixels[:, 1]) & (cheek_pixels[:, 0] > 85)]
-    return len(skin_candidates) >= 0.12 * len(cheek_pixels)
+
+    fg_upper = img_rgb[upper_mask]
+    r = fg_upper[:, 0].astype(int)
+    g = fg_upper[:, 1].astype(int)
+    b = fg_upper[:, 2].astype(int)
+
+    skin_cand = (r > g) & (r > b) & (r >= 70) & ((r - g) >= 10) & ((r - g) <= 110)
+    skin_count = np.sum(skin_cand)
+    if skin_count >= 120 or (len(fg_upper) > 0 and (skin_count / float(len(fg_upper))) >= 0.008):
+        return True
+
+    # Geometry check: narrow head, broader shoulders/arms
+    y_hd = int(y0 + 0.08 * h_fg)
+    y_sh = int(y0 + 0.25 * h_fg)
+    xs_hd = np.nonzero(mask[y_hd])[0] if 0 <= y_hd < mask.shape[0] else []
+    xs_sh = np.nonzero(mask[y_sh])[0] if 0 <= y_sh < mask.shape[0] else []
+    if len(xs_hd) >= 2 and len(xs_sh) >= 2:
+        w_hd = float(xs_hd[-1] - xs_hd[0])
+        w_sh = float(xs_sh[-1] - xs_sh[0])
+        if w_sh >= 1.4 * w_hd:
+            return True
+
+    return False
 
 
 def repair_symmetrical_collar(rgb_orig, orig_alpha):
@@ -530,7 +553,7 @@ def _compute_anatomical_uv_mapping(verts, geom_mask, y0_3d, y1_3d, x3_min_s, x3_
         elif i > 0:
             x2_min_s[i], x2_max_s[i] = x2_min_s[i - 1], x2_max_s[i - 1]
 
-    sigma_env = 6.0 if is_humanoid else 10.0
+    sigma_env = 1.8 if is_humanoid else 3.5
     x2_min_s = ndi.gaussian_filter1d(x2_min_s, sigma=sigma_env)
     x2_max_s = ndi.gaussian_filter1d(x2_max_s, sigma=sigma_env)
     x2_mid_s = 0.5 * (x2_min_s + x2_max_s)
@@ -619,14 +642,19 @@ def _compute_anatomical_uv_mapping(verts, geom_mask, y0_3d, y1_3d, x3_min_s, x3_
     return fx, fy
 
 
-def harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_b):
+def harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_b, is_real_back=False):
     """
-    Harmonizes the left/right 360° silhouette boundary between Front and Back views
-    so that side seams (where Front UV island meets Back UV island) have 100% color consistency.
+    Harmonizes the left/right 360° silhouette boundary between Front and Back views.
+    - If is_real_back is True: uses minimal 3% edge feathering so 97%+ of the real back photo is 100% sharp and intact.
+    - If is_real_back is False: harmonizes synthesized back boundaries smoothly.
     """
     H, W = front_padded.shape[:2]
     front_flipped = cv2.flip(front_padded, 1).astype(np.float32)
     back_f = back_padded.copy().astype(np.float32)
+
+    # When a real back photo is available, keep it pure and only feather the extreme 1-3% edge
+    margin_ratio = 0.03 if is_real_back else 0.14
+    min_margin = 2.0 if is_real_back else 4.0
 
     for y in range(H):
         xs_b = np.nonzero(geom_mask_b[y])[0]
@@ -636,7 +664,7 @@ def harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_
         w_row = float(xr - xl)
         if w_row < 10:
             continue
-        margin = max(4.0, w_row * 0.18)
+        margin = max(min_margin, w_row * margin_ratio)
         x_idx = np.arange(W, dtype=np.float32)
         dist_left = np.clip((x_idx - xl) / margin, 0.0, 1.0)
         dist_right = np.clip((xr - x_idx) / margin, 0.0, 1.0)
@@ -646,6 +674,80 @@ def harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_
         back_f[y] = w_seam[:, None] * front_flipped[y] + (1.0 - w_seam[:, None]) * back_f[y]
 
     return np.clip(back_f, 0, 255).astype(np.uint8)
+
+
+def repair_hands_skin(mesh, base_img):
+    """
+    Guarantees hand vertices on humanoid models have natural human skin tones
+    and removes green uniform sleeve bleed/contamination.
+    """
+    if base_img is None:
+        return base_img
+    try:
+        if isinstance(mesh, trimesh.Scene):
+            geoms = [g for g in mesh.geometry.values() if hasattr(g, 'vertices') and hasattr(g.visual, 'uv')]
+            if not geoms:
+                return base_img
+            target_mesh = geoms[0]
+        else:
+            target_mesh = mesh
+
+        if not hasattr(target_mesh, 'vertices') or not hasattr(target_mesh.visual, 'uv'):
+            return base_img
+
+        v = target_mesh.vertices
+        uv = target_mesh.visual.uv
+        if uv is None or len(uv) != len(v):
+            return base_img
+
+        tex = np.array(base_img.convert('RGB'))
+        H, W = tex.shape[:2]
+
+        x_mid = 0.5 * (float(v[:, 0].min()) + float(v[:, 0].max()))
+        arm_span = max(abs(float(v[:, 0].min()) - x_mid), abs(float(v[:, 0].max()) - x_mid))
+        y_max = float(v[:, 1].max())
+        h_3d = max(1e-4, y_max - float(v[:, 1].min()))
+
+        s_3d = (y_max - v[:, 1]) / h_3d
+        hand_mask = (np.abs(v[:, 0] - x_mid) > (0.82 * arm_span)) & (s_3d >= 0.12) & (s_3d <= 0.65)
+        if not np.any(hand_mask):
+            return base_img
+
+        u_px = np.clip(np.round(uv[hand_mask, 0] * (W - 1)).astype(int), 0, W - 1)
+        v_px = np.clip(np.round((1.0 - uv[hand_mask, 1]) * (H - 1)).astype(int), 0, H - 1)
+
+        # 1. Detect genuine skin color from face region if present
+        face_mask = (s_3d >= 0.04) & (s_3d <= 0.20) & (np.abs(v[:, 0] - x_mid) < 0.25 * arm_span)
+        skin_color = np.array([192, 148, 126], dtype=np.float32)
+        if np.any(face_mask):
+            fu_px = np.clip(np.round(uv[face_mask, 0] * (W - 1)).astype(int), 0, W - 1)
+            fv_px = np.clip(np.round((1.0 - uv[face_mask, 1]) * (H - 1)).astype(int), 0, H - 1)
+            f_colors = tex[fv_px, fu_px]
+            r, g, b = f_colors[:, 0].astype(int), f_colors[:, 1].astype(int), f_colors[:, 2].astype(int)
+            sk_cand = (r > g) & (r > b) & (r >= 75) & ((r - g) >= 12) & ((r - g) <= 110)
+            if np.any(sk_cand):
+                skin_color = np.median(f_colors[sk_cand], axis=0).astype(np.float32)
+
+        # 2. Check for green sleeve bleed on hand vertices
+        hand_colors = tex[v_px, u_px]
+        hr, hg, hb = hand_colors[:, 0].astype(int), hand_colors[:, 1].astype(int), hand_colors[:, 2].astype(int)
+        green_mask = (hg > hr + 2) | ((hg > 50) & (hg >= hr) & (hg > hb))
+
+        if np.any(green_mask):
+            hand_tex_mask = np.zeros((H, W), dtype=np.uint8)
+            hand_tex_mask[v_px[green_mask], u_px[green_mask]] = 255
+
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            hand_tex_mask = cv2.dilate(hand_tex_mask, kernel, iterations=2)
+            hand_tex_mask_blur = cv2.GaussianBlur(hand_tex_mask.astype(np.float32) / 255.0, (9, 9), 0)[:, :, None]
+
+            skin_patch = np.full_like(tex, skin_color, dtype=np.float32)
+            tex_repaired = (hand_tex_mask_blur * skin_patch + (1.0 - hand_tex_mask_blur) * tex.astype(np.float32)).clip(0, 255).astype(np.uint8)
+            return Image.fromarray(tex_repaired)
+    except Exception as e_repair:
+        logging.warning(f"repair_hands_skin notice: {e_repair}")
+
+    return base_img
 
 
 def apply_pbr_style_preset(atlas_8k, pbr_preset="auto", metallic_override=None, roughness_override=None):
@@ -909,7 +1011,7 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
             x3_min_s[i], x3_max_s[i] = x3_min_s[i - 1], x3_max_s[i - 1]
             z3_min_s[i], z3_max_s[i] = z3_min_s[i - 1], z3_max_s[i - 1]
 
-    sigma_env = 6.0 if is_humanoid else 10.0
+    sigma_env = 1.8 if is_humanoid else 3.5
     x3_min_s = ndi.gaussian_filter1d(x3_min_s, sigma=sigma_env)
     x3_max_s = ndi.gaussian_filter1d(x3_max_s, sigma=sigma_env)
     x3_mid_s = 0.5 * (x3_min_s + x3_max_s)
@@ -993,7 +1095,7 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
 
     if auto_sync_textures:
         try:
-            back_padded = harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_b)
+            back_padded = harmonize_multiview_seams(front_padded, back_padded, geom_mask_f, geom_mask_b, is_real_back=has_real_back)
         except Exception as e_seam:
             logging.warning(f"Seam harmonization notice: {e_seam}")
 
@@ -1069,5 +1171,11 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
         uv=np.vstack(all_uvs),
         material=pbr_mat
     )
+
+    # Clean any green uniform sleeve bleed from hand vertices
+    atlas_pil = repair_hands_skin(combo, atlas_pil)
+    combo.visual.material.baseColorTexture = atlas_pil
+
     return combo, atlas_pil
+
 

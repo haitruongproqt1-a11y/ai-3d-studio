@@ -191,6 +191,13 @@ def perfect_glb_model(glb_path: str, output_path: str = None,
     if base_img is None:
         return {"success": False, "error": "Mô hình không chứa Texture Map để hoàn thiện PBR."}
 
+    # 1.5 Khử màu xanh lem trên bàn tay & phục hồi màu da tự nhiên
+    try:
+        from texture_engine import repair_hands_skin
+        base_img = repair_hands_skin(scene, base_img)
+    except Exception as e_rh:
+        logger.warning(f"Hand repair notice: {e_rh}")
+
     # 2. Nâng cấp 4K & Phục hồi khuôn mặt (nếu được kích hoạt)
     if enable_upscale or enable_face_restore:
         if progress_cb:

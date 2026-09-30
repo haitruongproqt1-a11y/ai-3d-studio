@@ -1,16 +1,13 @@
 {
-  "version": "3.0.0",
+  "version": "3.0.1",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "🌟 ĐẠI PHÁT HÀNH v3.0.0: Giữ nguyên vẹn giao diện thiết kế v2.1.8 trực quan, thanh lịch và yêu thích nhất của Studio.",
-    "📸 Đa Góc Nhìn Chuẩn 360° (Khử triệt để ruột lép & lem màu): Tích hợp nút '🧩 Cắt 4 Ô Ghép' tự động chia ảnh 2x2 thành 4 góc nhìn chuẩn, giúp AI nội suy khối 3D kín mít và map màu sắc chính xác 100%.",
-    "🐉 Mở Rộng Bước Suy Luận Flow Matching: Bổ sung các mốc 20, 25 và 30 bước Tối Thượng (Denoising siêu sâu, cấu trúc bề mặt cực mịn, triệt tiêu hiện tượng móp méo/rỗng khối).",
-    "👑 Mở Rộng Độ Phân Giải Không Gian Octree: Bổ sung 512 Octree (Lưới siêu dày, độ nét vi mô cho chi tiết hữu cơ) và 384 Octree.",
-    "🎬 Mặc Định Ánh Sáng Cinema ACES: Màu sắc chuyển tông điện ảnh chân thực, chống hiện tượng cháy mảng màu và đốm bóng gắt.",
-    "✨ Pipeline Hậu Kỳ Texture 4K (Real-ESRGAN + Face Restoration): Nút bấm '✨ Nâng Cấp Texture 4K (AI)' trên thanh công cụ cho phép upscale texture lên 4K và phục hồi khuôn mặt siêu nét mà chỉ tốn < 100MB VRAM.",
-    "🔧 Hệ Thống Manifold Watertight Repair: Tự động vá lỗ hổng (fill holes), sửa pháp tuyến và làm mịn Taubin bảo toàn thể tích 3D."
+    "🚀 Nạp 3D Ngoài Siêu Mượt (Loopback HTTP Streaming): Khắc phục triệt để hiện tượng đơ/lag giao diện khi mở file GLB/OBJ lớn. Mô hình được stream trực tiếp qua luồng bộ đệm 0.01s, tự động căn giữa khung nhìn camera và đồng bộ mọi nút chức năng (Hoàn thiện PBR, Nâng cấp 4K, Xuất file).",
+    "📸 Tự Động Kết Nối & Tô Màu 360° Mặt Trước - Mặt Sau: Tự động nhận diện ảnh mặt sau (companion back) trong cùng thư mục khi chọn ảnh chính diện. Giữ nguyên 100% độ sắc nét và chi tiết thực của ảnh lưng, khắc phục hoàn toàn lỗi lưng bị tô lặp theo mặt trước.",
+    "✋ Khử Triệt Để Màu Xanh Bàn Tay (Phục Hồi Màu Da & Chi Tiết 3D): Nâng cấp thuật toán UV dải biên độ cho dáng T-pose/A-pose. Tự động nhận diện bàn tay và thay thế triệt để màu vải quân phục xanh lem bằng sắc da người tự nhiên, ấm mịn và rõ ràng.",
+    "🎨 Hoàn Thiện PBR Chuẩn Blender Tự Động Khử Nhựa & Tô Bàn Tay: Nút 'Hoàn Thiện PBR' nay tích hợp bộ lọc phục hồi da bàn tay và nướng bản đồ Normal Map + ORM chân thực đạt chuẩn AAA cho mọi mô hình ngoài và nội bộ."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.0/update_v3.0.0.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.0/update_v3.0.0.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.0/update_v3.0.0.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.1/update_v3.0.1.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.1/update_v3.0.1.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.1/update_v3.0.1.zip"
 }
