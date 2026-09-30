@@ -1,14 +1,14 @@
 {
-  "version": "3.0.2",
+  "version": "3.0.3",
   "buildDate": "2026-09-30",
   "releaseNotes": [
-    "🎨 Tô Màu & Nướng PBR Cho Mô Hình Trắng/Clay Từ Ảnh Tham Chiếu: Cho phép nạp bất kỳ mô hình 3D trắng, tượng thạch cao, clay sculpt (từ Hunyuan, Tripo, ZBrush, Blender...), sau đó nạp ảnh 2D đối chiếu (mặt trước & mặt sau) để AI tự động chiếu toạ độ UV giải phẫu và nướng toàn bộ Texture Atlas 8K Ultra-HD.",
-    "🛡️ Bảo Toàn 100% Cấu Trúc Khối Gốc (Preserve Geometry): Thuật toán chiếu UV thông minh không làm biến dạng tỷ lệ khung xương, không làm móp méo chi tiết điêu khắc sẵn có của mô hình trắng.",
-    "✨ Hoàn Thiện PBR Đa Kênh Tự Động: Tự động phân đoạn chất liệu vải, da mặt, kim loại; nướng Tangent-Space Normal Map (nếp nhăn 3D) và ORM Map (Roughness/Metallic/AO) chuẩn điện ảnh Blender glTF 2.0.",
-    "✋ Khử Lem Màu Xanh Bàn Tay: Tự động nhận diện bàn tay và tái tạo sắc tố da người tự nhiên, ấm mịn, xoá bỏ hoàn toàn vệt màu xanh quân phục.",
-    "🚀 Nút Thao Tác Trực Quan [🎨 Tô Màu Từ Ảnh (PBR)] & Tự Động Chuyển Hướng Thông Minh: Tích hợp nút thao tác trực tiếp trên thanh công cụ và tự động nhận diện mô hình trắng khi bấm [Hoàn Thiện PBR] để hỗ trợ người dùng ngay tức thì."
+    "💎 Khử 100% Hiện Tượng Bóng Nhựa & Vải Loang Đen: Loại bỏ hoàn toàn specular plastic shine, chuẩn hóa chất liệu vải và da người về Dielectric phi kim tự nhiên (Roughness 0.90 mờ lì, Metallic = 0.0), triệt tiêu hoàn toàn các đốm đen obsidian trên túi áo và nếp gấp.",
+    "🎒 Khôi Phục Toàn Vẹn 100% Chi Tiết Mặt Trước: Tối ưu thuật toán phân tách mặt trước/sau theo góc pháp tuyến (Normal-based Face Separation), khắc phục triệt để lỗi 67.000 đa giác mặt trước (bình tông nước, túi bao đạn) bị tô nhầm ảnh lưng.",
+    "🌊 Triệt Tiêu Sọc Ngang Trên Normal Map Bằng Voronoi Dilation: Thay thế toàn bộ thuật toán đệm ngang cũ bằng bộ mở rộng đẳng hướng Voronoi 2D, loại bỏ nếp gấp tôn nhăn giả tạo trên cánh tay và thân áo.",
+    "💡 Ánh Sáng Mặc Định Studio Chân Thực (Ảnh Gốc): Chế độ ánh sáng Neutral trung thực với ảnh gốc được kích hoạt tự động ngay khi hoàn tất mô hình, màu sắc trong trẻo, không bị cháy sáng hay chìm bóng như ACES Cinema.",
+    "⚡ Tối Ưu Nổi Khối Tinh Tế: Tinh chỉnh cường độ Normal Bump về chuẩn công nghiệp điện ảnh (0.75), tái hiện thớ vải và đường may tinh xảo như các tài sản 3D thương mại."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.2/update_v3.0.2.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.2/update_v3.0.2.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.2/update_v3.0.2.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.3/update_v3.0.3.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.3/update_v3.0.3.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.0.3/update_v3.0.3.zip"
 }

@@ -53,45 +53,42 @@ def generate_pbr_maps(base_img: Image.Image, progress_cb=None):
     V_chan = hsv[:, :, 2] / 255.0
     gray = cv2.cvtColor(work_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
 
-    # Kim loại (Bi-đông nước, khóa nịt, đầu đạn, cúc bấm, kim loại nhôm/sắt):
-    # Độ bão hòa màu thấp (S < 0.16), độ sáng từ trung bình đến cao
-    metal_mask = (S_chan < 0.16) & (V_chan > 0.40) & (V_chan < 0.94)
-    # Loại trừ nền trắng hoặc nền xám đồng nhất góc ngoài
-    metal_mask &= ~((S_chan < 0.05) & (V_chan > 0.95))
+    # Kim loại thực sự (chỉ những điểm sáng bạc/nhôm hoặc đồng sáng rõ ràng):
+    # Rất hạn chế để không biến bóng đổ vải/túi thành kim loại đen bóng!
+    metal_mask = (S_chan < 0.08) & (V_chan > 0.85) & (gray > 0.82)
 
-    # Da mặt & bàn tay: Tông màu ấm (H trong [3, 24]), độ bão hòa vừa phải
-    skin_mask = (H_chan >= 3) & (H_chan <= 24) & (S_chan >= 0.18) & (S_chan <= 0.68) & (V_chan >= 0.35)
+    # Da mặt & bàn tay: Tông màu ấm tự nhiên
+    skin_mask = (H_chan >= 3) & (H_chan <= 24) & (S_chan >= 0.16) & (S_chan <= 0.68) & (V_chan >= 0.35)
 
     # Da thuộc / quai dây đeo: Nâu thẫm / vàng sẫm
-    leather_mask = (H_chan >= 10) & (H_chan <= 32) & (S_chan >= 0.25) & (V_chan >= 0.18) & (V_chan < 0.50)
-
-    # Vải quân phục, nón cối, bao đạn: Màu rằn ri / xanh ô-liu / kaki thô
-    cloth_mask = ~(metal_mask | skin_mask | leather_mask)
+    leather_mask = (H_chan >= 10) & (H_chan <= 32) & (S_chan >= 0.25) & (V_chan >= 0.15) & (V_chan < 0.50)
 
     if progress_cb:
         progress_cb("🎨 Đang tổng hợp bản đồ độ nhám Roughness & kim loại Metallic…", 50)
 
     # 2. Tạo Kênh Roughness (Kênh Green trong glTF ORM)
-    # Vải = 0.86 (nhám mờ hút sáng), Da mặt = 0.38 (ẩm mịn), Kim loại = 0.18 (láng bóng), Da thuộc = 0.55
-    roughness = np.full((work_h, work_w), 0.86, dtype=np.float32)
-    roughness[leather_mask] = 0.55
-    roughness[skin_mask] = 0.38
-    roughness[metal_mask] = 0.18
+    # Vải quân phục = 0.90 (mờ lì, hút sáng, khử sạch bóng nhựa nylon)
+    # Da mặt = 0.64 (ẩm mịn, độ mờ lì tự nhiên chuẩn người thật, không bóng nhờn)
+    # Da thuộc = 0.72 (bán lì)
+    # Kim loại = 0.42 (kim loại dã chiến phay xước, không phản chiếu gương)
+    roughness = np.full((work_h, work_w), 0.90, dtype=np.float32)
+    roughness[leather_mask] = 0.72
+    roughness[skin_mask] = 0.64
+    roughness[metal_mask] = 0.42
 
-    # Vi nếp nhăn thớ vải (Micro-weave roughness)
+    # Vi nếp nhăn thớ vải (Micro-weave roughness rất nhẹ)
     fine_detail = np.abs(gray - cv2.GaussianBlur(gray, (0, 0), 1.5))
-    roughness = np.clip(roughness + fine_detail * 0.14, 0.05, 0.98)
+    roughness = np.clip(roughness + fine_detail * 0.05, 0.40, 0.96)
 
     # 3. Tạo Kênh Metallic (Kênh Blue trong glTF ORM)
-    # Kim loại = 0.92, các vùng phi kim = 0.0
+    # 99.9% vật liệu là phi kim (metallic = 0.0). Chỉ các chi tiết kim loại cực nhỏ mới có ánh kim nhẹ (0.35 max)
     metallic = np.zeros((work_h, work_w), dtype=np.float32)
-    metallic[metal_mask] = 0.92
+    metallic[metal_mask] = 0.35
 
     # 4. Tạo Kênh Ambient Occlusion (Kênh Red trong glTF ORM)
-    # Tạo bóng đổ hốc nách, kẽ rãnh, nếp gấp túi đạn
-    blur_coarse = cv2.GaussianBlur(gray, (0, 0), 8.0)
-    ao = np.clip(0.65 + (gray - blur_coarse) * 0.75, 0.25, 1.0)
-    ao[gray > 0.97] = 1.0
+    # Tạo bóng đổ êm dịu, không làm đen sì hay loang lổ bề mặt
+    blur_coarse = cv2.GaussianBlur(gray, (0, 0), 12.0)
+    ao = np.clip(0.92 + (gray - blur_coarse) * 0.25, 0.75, 1.0)
 
     # Ghép thành ảnh ORM tiêu chuẩn glTF 2.0 (R=AO, G=Roughness, B=Metallic)
     orm_work = np.dstack([
@@ -106,13 +103,13 @@ def generate_pbr_maps(base_img: Image.Image, progress_cb=None):
         progress_cb("📐 Đang điêu khắc bản đồ pháp tuyến vi mô Normal Map (Nếp nhăn 3D)…", 70)
 
     # 5. Tạo Bản đồ Pháp Tuyến Tangent-Space Normal Map (R=Nx, G=Ny, B=Nz)
-    # Dùng bộ lọc Sobel đa dải tần kết hợp để tạo độ nổi khối nếp gấp vải & mắt lưới nón cối
-    gray_smooth = cv2.GaussianBlur(gray, (0, 0), 0.8)
+    # Lọc mượt khử nhiễu nén ảnh trước khi tính gradient
+    gray_smooth = cv2.GaussianBlur(gray, (0, 0), 1.2)
     sobel_x = cv2.Sobel(gray_smooth, cv2.CV_32F, 1, 0, ksize=3)
     sobel_y = cv2.Sobel(gray_smooth, cv2.CV_32F, 0, 1, ksize=3)
 
-    # Cường độ nổi khối (Strength) tối ưu cho vải quân trang & phụ kiện
-    bump_strength = 2.4
+    # Cường độ nổi khối chuẩn AAA (0.75) – nếp nhăn tinh tế, không biến bề mặt thành tôn nhăn
+    bump_strength = 0.75
     nx = -sobel_x * bump_strength
     ny = -sobel_y * bump_strength
     nz = np.ones_like(nx)

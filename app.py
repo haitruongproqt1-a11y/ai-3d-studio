@@ -41,7 +41,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.0.2"
+APP_VERSION = "v3.0.3"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -2333,7 +2333,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v3.0.0</span>
+    <span class="ver" id="ver">v3.0.3</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
@@ -2573,8 +2573,8 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
       <!-- Lighting Presets -->
       <div class="tool-group">
         <span class="tool-label">💡 Ánh sáng:</span>
-        <button class="light-btn" id="lbtnStudio" onclick="setLighting('studio')">✨ Chân thực (Ảnh gốc)</button>
-        <button class="light-btn active" id="lbtnCinema" onclick="setLighting('aces')">🎬 Cinema ACES</button>
+        <button class="light-btn active" id="lbtnStudio" onclick="setLighting('studio')">✨ Chân thực (Ảnh gốc)</button>
+        <button class="light-btn" id="lbtnCinema" onclick="setLighting('aces')">🎬 Cinema ACES</button>
         <button class="light-btn" id="lbtnSoft" onclick="setLighting('soft')">☀️ Dịu mắt</button>
       </div>
 
@@ -2623,10 +2623,10 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         interaction-prompt="none"
         minimum-render-scale="1"
         min-camera-orbit="auto auto 5%"
-        shadow-intensity="1.2"
-        shadow-softness="0.4"
-        exposure="1.05"
-        tone-mapping="aces"
+        shadow-intensity="0.3"
+        shadow-softness="0.8"
+        exposure="1.0"
+        tone-mapping="neutral"
         style="display:none">
       </model-viewer>
 
@@ -3430,6 +3430,7 @@ async function doPaintModelFromImage() {
         lastGlbData = newSrc;
         lastFolder = res.folder;
       }
+      setLighting('studio');
       window._setProgress('✅ Hoàn tất! Mô hình 3D đã được tô màu 360° và phủ vật liệu PBR chuẩn Blender.', 100);
     } else {
       window._setProgress('❌ ' + (res ? res.error : 'Lỗi tô màu mô hình'), -1);
@@ -3460,6 +3461,7 @@ async function doAutoPbr() {
         mv.src = newSrc;
         lastGlbData = newSrc;
       }
+      setLighting('studio');
       window._setProgress('✅ Hoàn tất! Mô hình đã được phủ bộ vật liệu PBR chuẩn Blender (Normal + Kim loại + Da mặt).', 100);
     } else if (res && res.is_untextured) {
       window._setProgress('💡 Mô hình là khối trắng. Đang chuyển sang chế độ Tô Màu & PBR từ ảnh...', 25);

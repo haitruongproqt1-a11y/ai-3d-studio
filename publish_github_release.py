@@ -61,7 +61,7 @@ if not release_data:
     body_notes = "\n".join([f"- {note}" for note in vdata.get("releaseNotes", [])])
     payload = {
         "tag_name": version,
-        "name": f"AI 3D Studio {version} – Tô Màu Mô Hình Trắng Từ Ảnh Tham Chiếu & Hoàn Thiện PBR Chuẩn Blender",
+        "name": f"AI 3D Studio {version} – Chuẩn Hóa PBR Đẳng Cấp AAA: Khử Sạch Bóng Nhựa & Phục Hồi 100% Chi Tiết",
         "body": f"### Bản phát hành AI 3D Studio {version}\n\n{body_notes}\n\n*Gói cập nhật OTA tự động tải về qua ứng dụng.*",
         "draft": False,
         "prerelease": False

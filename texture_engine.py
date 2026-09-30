@@ -293,18 +293,7 @@ def clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, target_w, targ
     geom_mask = cv2.resize(geom_mask_orig.astype(np.uint8) * 255, (target_w, target_h), interpolation=interp_mask) > 127
     color_mask = cv2.resize(color_mask_orig.astype(np.uint8) * 255, (target_w, target_h), interpolation=interp_mask) > 127
 
-    padded = view_rgb.copy()
-    for y in range(target_h):
-        xs = np.nonzero(color_mask[y])[0]
-        if len(xs) >= 4:
-            xl, xr = xs[0], xs[-1]
-            c_left = np.median(view_rgb[y, xl:min(target_w, xl + 6)], axis=0).astype(np.uint8)
-            c_right = np.median(view_rgb[y, max(0, xr - 5):xr + 1], axis=0).astype(np.uint8)
-            padded[y, :xl] = c_left
-            padded[y, xr + 1:] = c_right
-
-    padded = cv2.GaussianBlur(padded, (5, 5), 0)
-    padded[color_mask] = view_rgb[color_mask]
+    padded = voronoi_pad(view_rgb, color_mask)
     return padded, geom_mask, color_mask
 
 
@@ -1124,7 +1113,7 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     f_zmax = np.interp(f_s, s_grid, z3_max_s)
     f_z_rel = (f_centers[:, 2] - f_zmin) / np.maximum(0.05, f_zmax - f_zmin)
 
-    front_face_mask = (fn[:, 2] >= -0.15) & (f_z_rel >= 0.25)
+    front_face_mask = (fn[:, 2] >= 0.0) | ((fn[:, 2] >= -0.15) & (f_z_rel >= 0.50))
     back_face_mask = ~front_face_mask
 
     w_tex = float(W * 2.0)
