@@ -43,7 +43,8 @@ def voronoi_pad(img_rgb, mask):
 def _is_humanoid_portrait(img_rgb, mask):
     """
     Detects whether the foreground subject is a humanoid character (standing portrait, A-pose, or T-pose).
-    Supports characters wearing helmets/hats and characters with outstretched horizontal arms.
+    Strictly prevents false positives on weapons (swords, daggers, guns), tools, vehicles, or tapered props.
+    Requires either genuine human skin or anatomically validated humanoid torso + leg split.
     """
     coords = np.nonzero(mask)
     if len(coords[0]) < 100:
@@ -53,7 +54,7 @@ def _is_humanoid_portrait(img_rgb, mask):
     h_fg = float(max(1, y1 - y0))
     w_fg = float(max(1, x1 - x0))
     aspect = h_fg / w_fg
-    if aspect < 0.65:
+    if aspect < 0.85 or aspect > 4.5:
         return False
 
     # Check for skin pixels across upper body [0.03*h_fg .. 0.45*h_fg] (face, neck, or hands)
@@ -68,21 +69,26 @@ def _is_humanoid_portrait(img_rgb, mask):
     g = fg_upper[:, 1].astype(int)
     b = fg_upper[:, 2].astype(int)
 
-    skin_cand = (r > g) & (r > b) & (r >= 70) & ((r - g) >= 10) & ((r - g) <= 110)
+    skin_cand = (r > g) & (r > b) & (r >= 75) & ((r - g) >= 15) & ((r - g) <= 100) & (b < 180)
     skin_count = np.sum(skin_cand)
-    if skin_count >= 120 or (len(fg_upper) > 0 and (skin_count / float(len(fg_upper))) >= 0.008):
+    has_skin = skin_count >= 250 and (skin_count / float(len(fg_upper))) >= 0.015
+    if has_skin:
         return True
 
-    # Geometry check: narrow head, broader shoulders/arms
-    y_hd = int(y0 + 0.08 * h_fg)
-    y_sh = int(y0 + 0.25 * h_fg)
-    xs_hd = np.nonzero(mask[y_hd])[0] if 0 <= y_hd < mask.shape[0] else []
-    xs_sh = np.nonzero(mask[y_sh])[0] if 0 <= y_sh < mask.shape[0] else []
-    if len(xs_hd) >= 2 and len(xs_sh) >= 2:
-        w_hd = float(xs_hd[-1] - xs_hd[0])
-        w_sh = float(xs_sh[-1] - xs_sh[0])
-        if w_sh >= 1.4 * w_hd:
-            return True
+    # If wearing full helmet/armor without visible skin:
+    # Must have humanoid leg split in lower body [0.65*h_fg .. 0.85*h_fg] (two distinct legs)
+    leg_splits = 0
+    for s_step in np.linspace(0.65, 0.85, 10):
+        y_leg = int(y0 + s_step * h_fg)
+        if 0 <= y_leg < mask.shape[0]:
+            row = mask[y_leg]
+            diff = np.diff(row.astype(int))
+            # Crossing into foreground = +1
+            if np.sum(diff > 0) >= 2:
+                leg_splits += 1
+
+    if leg_splits >= 4:
+        return True
 
     return False
 
@@ -895,7 +901,7 @@ def repair_hands_skin(mesh, base_img):
 
         # 1. Detect genuine skin color from face region if present
         face_mask = (s_3d >= 0.04) & (s_3d <= 0.20) & (np.abs(v[:, 0] - x_mid) < 0.25 * arm_span)
-        skin_color = np.array([192, 148, 126], dtype=np.float32)
+        skin_color = None
         if np.any(face_mask):
             fu_px = np.clip(np.round(uv[face_mask, 0] * (W - 1)).astype(int), 0, W - 1)
             fv_px = np.clip(np.round((1.0 - uv[face_mask, 1]) * (H - 1)).astype(int), 0, H - 1)
@@ -904,6 +910,10 @@ def repair_hands_skin(mesh, base_img):
             sk_cand = (r > g) & (r > b) & (r >= 75) & ((r - g) >= 12) & ((r - g) <= 110)
             if np.any(sk_cand):
                 skin_color = np.median(f_colors[sk_cand], axis=0).astype(np.float32)
+
+        # If no genuine human skin was verified on face/neck, NEVER inject synthetic skin patches!
+        if skin_color is None:
+            return base_img
 
         # 2. Check for green sleeve bleed on hand vertices
         hand_colors = tex[v_px, u_px]
@@ -1083,7 +1093,8 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
                         color_mode="color", pbr_preset="auto",
                         metallic_override=None, roughness_override=None,
                         auto_sync_textures=True,
-                        preserve_geometry=False):
+                        preserve_geometry=False,
+                        is_humanoid=None):
     """
     Applies Zero-Distortion High-Poly 3D Relief Sculpting and UV-Space Anatomical 8K Ultra-HD PBR Texture (8192px)
     with 360° Multi-View Seam Harmonization and Direct-to-PBR Material Presets.
@@ -1117,7 +1128,9 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     H = max(128, int(round(h_raw * scale_work)))
 
     front_padded, geom_mask_f, _ = clean_and_pad_view(rgb_orig, geom_mask_orig, color_mask_orig, W, H)
-    is_humanoid = _is_humanoid_portrait(front_padded, geom_mask_f)
+    if is_humanoid is None:
+        is_humanoid = _is_humanoid_portrait(front_padded, geom_mask_f)
+    logging.info(f"Target model classification: is_humanoid={is_humanoid}, preset={pbr_preset}")
 
     # 2. Frame Calibration (Precise 1:1 Aspect Ratio Alignment)
     # Calibrates 3D mesh width and depth to match photo foreground silhouette, eliminating squatting/stretching.
@@ -1504,7 +1517,12 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
     # 8. Create PBR Material with Normal Map & ORM Map
     try:
         from pbr_perfector import generate_pbr_maps
-        orm_img, normal_img = generate_pbr_maps(atlas_pil)
+        is_metal_mat = (m_factor > 0.45 or pbr_preset == "metallic")
+        orm_img, normal_img = generate_pbr_maps(
+            atlas_pil,
+            is_metallic=is_metal_mat,
+            is_humanoid=is_humanoid
+        )
         pbr_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=atlas_pil,
             metallicRoughnessTexture=orm_img,
@@ -1532,9 +1550,10 @@ def bake_meshy_pbr_mesh(mesh, image_source=None, back_image_source=None,
         material=pbr_mat
     )
 
-    # Clean any green uniform sleeve bleed from hand vertices
-    atlas_pil = repair_hands_skin(combo, atlas_pil)
-    combo.visual.material.baseColorTexture = atlas_pil
+    # Clean green uniform sleeve bleed from hand vertices ONLY on humanoid characters
+    if is_humanoid:
+        atlas_pil = repair_hands_skin(combo, atlas_pil)
+        combo.visual.material.baseColorTexture = atlas_pil
 
     return combo, atlas_pil
 

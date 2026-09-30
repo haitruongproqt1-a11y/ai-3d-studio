@@ -41,7 +41,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.1.1"
+APP_VERSION = "v3.1.2"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -1051,7 +1051,33 @@ class AppApi:
             os.makedirs(item_dir, exist_ok=True)
             concept_file = os.path.join(item_dir, "concept.png")
 
-            clean_prompt = f"{prompt_en}, centered studio 3d object, full view, pure white background, hyperrealistic, sharp focus, 8k"
+            p_lower = prompt.lower() + " " + prompt_en.lower()
+            metal_words = [
+                "thép", "kim loại", "kiếm", "sắt", "đồng", "vàng", "bạc", "dao", "súng", "giáp", "xe",
+                "robot", "armor", "sword", "blade", "steel", "iron", "gold", "silver", "metallic", "metal",
+                "bronze", "brass", "chrome", "knife", "weapon", "shield", "coin", "katana", "dagger", "axe"
+            ]
+            human_words = [
+                "người", "cô gái", "chàng trai", "nhân vật", "nữ", "nam", "bộ đội", "chiến sĩ",
+                "lính", "ông", "bà", "em bé", "man", "woman", "girl", "boy", "warrior", "character",
+                "soldier", "person", "human", "portrait"
+            ]
+            is_metallic_prompt = any(w in p_lower for w in metal_words)
+            is_humanoid_prompt = any(w in p_lower for w in human_words) and not any(w in p_lower for w in ["kiếm", "súng", "xe", "dao", "vũ khí", "sword", "gun", "car", "weapon", "dagger", "knife"])
+
+            if is_metallic_prompt and not is_humanoid_prompt:
+                clean_prompt = f"isolated full {prompt_en}, upright vertical orientation, centered, standing straight up, full object visible from tip to base, solid neutral studio background, 3d game asset model, photorealistic, 8k"
+                pbr_style = "metallic"
+                humanoid_flag = False
+            elif is_humanoid_prompt:
+                clean_prompt = f"full body standing portrait of {prompt_en}, upright, centered, A-pose, solid clean neutral studio background, photorealistic, 8k"
+                pbr_style = "auto"
+                humanoid_flag = True
+            else:
+                clean_prompt = f"isolated 3d asset of {prompt_en}, perfectly centered, upright vertical orientation, entire object in frame, solid neutral studio background, photorealistic, 8k"
+                pbr_style = "auto"
+                humanoid_flag = False
+
             encoded_prompt = urllib.parse.quote(clean_prompt)
             url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true&seed={ts % 10000}"
 
@@ -1085,13 +1111,15 @@ class AppApi:
                 self._progress("🐉 Đưa hình phác họa vào RTX Hunyuan3D Turbo tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hunyuan3d_turbo(
                     concept_file, num_steps=num_steps, octree_res=octree_res,
-                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode,
+                    pbr_preset=pbr_style, is_humanoid=humanoid_flag
                 )
             else:
                 self._progress("⚡ Đưa hình phác họa vào GPU RTX TripoSR tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_local(
                     concept_file, quality=quality, smooth=smooth,
-                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode,
+                    pbr_preset=pbr_style, is_humanoid=humanoid_flag
                 )
 
             if res.get("success"):
@@ -1149,7 +1177,7 @@ class AppApi:
 
     # ── ENGINE 1: LOCAL FAST (RTX TRIPOSR ~15s) ──────────────────────────────
     def _gen_local(self, file_path, quality="pbr_1024", smooth=True, target_dir=None, task_id=None,
-                   back_image=None, color_mode="color"):
+                   back_image=None, color_mode="color", pbr_preset="auto", is_humanoid=None):
         global model, current_device
         if model is None or not _model_ready.is_set():
             self._progress("⏳ Đang nạp TripoSR vào GPU RTX 3050 (~15s)…", 5, task_id=task_id)
@@ -1218,7 +1246,9 @@ class AppApi:
                     baked_mesh, _ = bake_meshy_pbr_mesh(
                         meshes[0], image,
                         back_image_source=back_image,
-                        color_mode="color"
+                        color_mode="color",
+                        pbr_preset=pbr_preset,
+                        is_humanoid=is_humanoid
                     )
                     meshes = [baked_mesh]
                 except Exception as e_bake:
@@ -1269,7 +1299,8 @@ class AppApi:
 
     # ── ENGINE 2: LOCAL REALISTIC (HUNYUAN3D-2 TURBO DIT FLOW MATCHING) ─────
     def _gen_hunyuan3d_turbo(self, file_path, num_steps=10, octree_res=160, target_dir=None, task_id=None,
-                             back_image=None, left_image=None, right_image=None, color_mode="color"):
+                             back_image=None, left_image=None, right_image=None, color_mode="color",
+                             pbr_preset="auto", is_humanoid=None):
         global hunyuan_pipeline
 
         if not is_hunyuan_downloaded():
@@ -1368,7 +1399,9 @@ class AppApi:
                     back_image_source=back_image,
                     left_image_source=left_image,
                     right_image_source=right_image,
-                    color_mode=color_mode
+                    color_mode=color_mode,
+                    pbr_preset=pbr_preset,
+                    is_humanoid=is_humanoid
                 )
             except Exception as e_col:
                 logging.exception(f"Meshy PBR/Relief Texture Engine error: {e_col}")
@@ -2356,7 +2389,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v3.1.1</span>
+    <span class="ver" id="ver">v3.1.2</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>

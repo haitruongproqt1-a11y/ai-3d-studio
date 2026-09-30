@@ -1,14 +1,14 @@
 {
-  "version": "3.1.1",
-  "buildDate": "2026-09-30",
+  "version": "3.1.2",
+  "buildDate": "2026-10-01",
   "releaseNotes": [
-    "🔧 Hotfix: Sửa lỗi 'color_mode' khi dùng RTX Đăng Cấp từ văn bản. Lỗi 'generate_from_text() got an unexpected keyword argument color_mode' đã được khắc phục hoàn toàn — tính năng tạo 3D từ văn bản (RTX Đăng Cấp, RTX Siêu Tốc, Cloud Free) hoạt động 100%.",
-    "🎯 Side-View Angle-Weighted Blend: 2 bên sườn blend mượt từ ảnh cạnh thật, không còn seam artifacts (từ v3.1.0).",
-    "🌍 Universal Model Support (Cylindrical UV): Hỗ trợ mọi loại model — người, thú, xe, đồ vật (từ v3.1.0).",
-    "🎨 Color Histogram Harmonization: Cân bằng màu giữa tất cả góc nhìn (từ v3.1.0).",
-    "🔲 Seam Dilation 8px: Xóa đường viền đen ở UV seam (từ v3.1.0)."
+    "⚔️ Đột Phá Tạo Đồ Vật & Vũ Khí (Universal Object & Weapon Engine): Tự động phân loại chính xác giữa đồ vật/vũ khí/xe cộ và nhân vật người. Tuyệt đối không còn hiện tượng nhận nhầm thanh kiếm/đồ vật thành người.",
+    "🛡️ Khử Triệt Để Vết Da Người Trên Đồ Vật: Loại bỏ 100% các vệt da màu cam loang lổ do hàm repair_hands_skin gây ra trước đây trên kiếm, dao, súng hay xe cộ. Chỉ áp dụng làm mịn da khi phát hiện khuôn mặt người thật.",
+    "✨ Phản Chiếu Thép Kim Loại Sáng Bóng (Realistic Metallic PBR): Tự động gán Metallic = 0.92 và Roughness = 0.22 cho các vật phẩm bằng thép, vàng, bạc, giáp, xe cộ. Ánh kim phản xạ chân thực chuẩn Blender.",
+    "📐 Tối Ưu Hóa Phác Thảo 2D Trực Diện Đứng (Orthographic Upright Alignment): Ép buộc AI vẽ đồ vật/vũ khí luôn ở tư thế thẳng đứng đối xứng 100%, không bị vẽ xiên chéo 45° gây cắt cụt lưỡi kiếm.",
+    "🚀 Bảo Toàn 100% Chi Tiết Mỏng & Lưỡi Kiếm: Khắc phục lỗi tách nền rembg xóa mất lưỡi kiếm thép sáng màu."
   ],
-  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.1/update_v3.1.1.zip",
-  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.1/update_v3.1.1.zip",
-  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.1/update_v3.1.1.zip"
+  "updateUrl": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.2/update_v3.1.2.zip",
+  "ota_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.2/update_v3.1.2.zip",
+  "download_url": "https://github.com/haitruongproqt1-a11y/ai-3d-studio/releases/download/v3.1.2/update_v3.1.2.zip"
 }

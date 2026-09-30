@@ -29,11 +29,12 @@ logger = logging.getLogger("PBRPerfector")
 logging.basicConfig(level=logging.INFO)
 
 
-def generate_pbr_maps(base_img: Image.Image, progress_cb=None):
+def generate_pbr_maps(base_img: Image.Image, progress_cb=None, is_metallic=False, is_humanoid=True):
     """
     Tự động phân tích ảnh Texture và tạo bộ bản đồ PBR:
     - orm_img: Texture ORM (R: Ambient Occlusion, G: Roughness, B: Metallic)
     - normal_img: Texture Normal Map (Không gian tiếp tuyến Tangent-Space)
+    Hỗ trợ chế độ kim loại sáng bóng (is_metallic=True) cho vũ khí, kiếm, giáp, xe cộ.
     """
     if progress_cb:
         progress_cb("🔍 Đang phân tích chất liệu vải, da mặt và kim loại…", 30)
@@ -53,9 +54,8 @@ def generate_pbr_maps(base_img: Image.Image, progress_cb=None):
     V_chan = hsv[:, :, 2] / 255.0
     gray = cv2.cvtColor(work_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
 
-    # Kim loại thực sự (chỉ những điểm sáng bạc/nhôm hoặc đồng sáng rõ ràng):
-    # Rất hạn chế để không biến bóng đổ vải/túi thành kim loại đen bóng!
-    metal_mask = (S_chan < 0.08) & (V_chan > 0.85) & (gray > 0.82)
+    # Kim loại điểm sáng
+    metal_mask = (S_chan < 0.12) & (V_chan > 0.70)
 
     # Da mặt & bàn tay: Tông màu ấm tự nhiên
     skin_mask = (H_chan >= 3) & (H_chan <= 24) & (S_chan >= 0.16) & (S_chan <= 0.68) & (V_chan >= 0.35)
@@ -66,24 +66,32 @@ def generate_pbr_maps(base_img: Image.Image, progress_cb=None):
     if progress_cb:
         progress_cb("🎨 Đang tổng hợp bản đồ độ nhám Roughness & kim loại Metallic…", 50)
 
-    # 2. Tạo Kênh Roughness (Kênh Green trong glTF ORM)
-    # Vải quân phục = 0.90 (mờ lì, hút sáng, khử sạch bóng nhựa nylon)
-    # Da mặt = 0.64 (ẩm mịn, độ mờ lì tự nhiên chuẩn người thật, không bóng nhờn)
-    # Da thuộc = 0.72 (bán lì)
-    # Kim loại = 0.42 (kim loại dã chiến phay xước, không phản chiếu gương)
-    roughness = np.full((work_h, work_w), 0.90, dtype=np.float32)
-    roughness[leather_mask] = 0.72
-    roughness[skin_mask] = 0.64
-    roughness[metal_mask] = 0.42
+    # 2. Tạo Kênh Roughness (Green) & Metallic (Blue)
+    if is_metallic:
+        # Vũ khí, kiếm thép, giáp trụ, xe cộ, robot: ánh kim chân thực, độ bóng cao
+        roughness = np.full((work_h, work_w), 0.22, dtype=np.float32)
+        fine_detail = np.abs(gray - cv2.GaussianBlur(gray, (0, 0), 1.5))
+        roughness = np.clip(roughness + fine_detail * 0.12, 0.15, 0.48)
 
-    # Vi nếp nhăn thớ vải (Micro-weave roughness rất nhẹ)
-    fine_detail = np.abs(gray - cv2.GaussianBlur(gray, (0, 0), 1.5))
-    roughness = np.clip(roughness + fine_detail * 0.05, 0.40, 0.96)
+        metallic = np.full((work_h, work_w), 0.92, dtype=np.float32)
+        metallic[gray < 0.15] = 0.60
+    elif not is_humanoid:
+        # Đồ vật thông thường (bàn ghế, đồ vật, quái vật)
+        roughness = np.full((work_h, work_w), 0.55, dtype=np.float32)
+        metallic = np.zeros((work_h, work_w), dtype=np.float32)
+        metallic[metal_mask] = 0.75
+    else:
+        # Nhân vật người / quân nhân (quần áo vải thô, da mặt lì ẩm)
+        roughness = np.full((work_h, work_w), 0.90, dtype=np.float32)
+        roughness[leather_mask] = 0.72
+        roughness[skin_mask] = 0.64
+        roughness[metal_mask] = 0.42
 
-    # 3. Tạo Kênh Metallic (Kênh Blue trong glTF ORM)
-    # 99.9% vật liệu là phi kim (metallic = 0.0). Chỉ các chi tiết kim loại cực nhỏ mới có ánh kim nhẹ (0.35 max)
-    metallic = np.zeros((work_h, work_w), dtype=np.float32)
-    metallic[metal_mask] = 0.35
+        fine_detail = np.abs(gray - cv2.GaussianBlur(gray, (0, 0), 1.5))
+        roughness = np.clip(roughness + fine_detail * 0.05, 0.40, 0.96)
+
+        metallic = np.zeros((work_h, work_w), dtype=np.float32)
+        metallic[metal_mask] = 0.35
 
     # 4. Tạo Kênh Ambient Occlusion (Kênh Red trong glTF ORM)
     # Tạo bóng đổ êm dịu, không làm đen sì hay loang lổ bề mặt
