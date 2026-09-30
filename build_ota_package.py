@@ -15,6 +15,7 @@ files_to_pack = [
     "hf_free_client.py",
     "texture_engine.py",
     "texture_postprocess.py",
+    "pbr_perfector.py",
     "version.json",
     "Xem_File_3D.html",
     "Chay_AI_3D_Studio.bat",

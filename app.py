@@ -1484,6 +1484,61 @@ class AppApi:
             logging.exception("enhance_texture_4k error")
             return {"success": False, "error": str(e)}
 
+    def auto_perfect_glb_pbr(self, folder=None, task_id=None):
+        """
+        Tự động hoàn thiện chất liệu PBR chuẩn Studio cho bất kỳ file GLB nào:
+        - Phục hồi khuôn mặt & làm nét 4K
+        - Phân đoạn thông minh da mặt, vải thô, kim loại bóng bẩy
+        - Sinh Normal Map (nếp nhăn 3D) và ORM Metallic-Roughness Map
+        """
+        target_path = None
+        target_folder = folder or self.last_folder
+
+        if target_folder and os.path.isdir(target_folder):
+            cand_p = os.path.join(target_folder, "model.glb")
+            if os.path.exists(cand_p):
+                target_path = cand_p
+        elif target_folder and os.path.isfile(target_folder) and str(target_folder).lower().endswith(".glb"):
+            target_path = target_folder
+
+        if not target_path and self.last_glb and os.path.exists(self.last_glb):
+            target_path = self.last_glb
+
+        if not target_path and self._window:
+            types = ("GLB 3D Files (*.glb)", "All Files (*.*)")
+            res = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=types)
+            if res and len(res) > 0 and os.path.exists(res[0]):
+                target_path = res[0]
+
+        if not target_path or not os.path.exists(target_path):
+            return {"success": False, "error": "Chưa chọn file GLB nào để hoàn thiện PBR."}
+
+        try:
+            from pbr_perfector import perfect_glb_model
+
+            def _prog(msg, pct):
+                self._progress(msg, pct, task_id=task_id)
+
+            res = perfect_glb_model(
+                target_path,
+                enable_upscale=True,
+                enable_face_restore=True,
+                progress_cb=_prog
+            )
+
+            if res.get("success"):
+                out_p = res.get("glb_path", target_path)
+                with open(out_p, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                res["glb_data"] = f"data:model/gltf-binary;base64,{b64}"
+                self.last_glb = out_p
+                self.last_folder = os.path.dirname(out_p)
+
+            return res
+        except Exception as e:
+            logging.exception("auto_perfect_glb_pbr error")
+            return {"success": False, "error": str(e)}
+
     def export_file(self, file_type="glb"):
         src = self.last_glb if file_type == "glb" else self.last_obj
         if not src or not os.path.exists(src):
@@ -2151,6 +2206,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         </button>
         <button class="btn-act ready" id="btnEnhance4k" onclick="doEnhance4k()" title="Nâng cấp Texture lên 4K bằng Real-ESRGAN & Phục hồi khuôn mặt sắc nét" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-color:#a855f7">
           ✨ Nâng Cấp Texture 4K (AI)
+        </button>
+        <button class="btn-act ready" id="btnAutoPbr" onclick="doAutoPbr()" title="Tự động kiến tạo chất liệu PBR chuẩn Blender: Da mặt ẩm mịn, vải thô nhám, kim loại phản quang và nếp nhăn 3D" style="background:linear-gradient(135deg,#059669,#10b981);color:#fff;border-color:#34d399;font-weight:700">
+          🎨 Hoàn Thiện PBR (Blender)
         </button>
         <button class="btn-act ready" id="btnObj" onclick="doExport('obj')" title="Lưu định dạng OBJ cho Blender/Maya">
           📦 Lưu OBJ
@@ -2888,6 +2946,33 @@ async function doEnhance4k() {
     }
   } catch (e) {
     window._setProgress('❌ Lỗi nâng cấp: ' + e, -1);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doAutoPbr() {
+  const mv = document.getElementById('mv');
+  if (!mv || mv.style.display === 'none') {
+    window._setProgress('⚠️ Hãy tạo hoặc nạp mô hình 3D (GLB) trước khi hoàn thiện PBR!', -1);
+    return;
+  }
+  const btn = document.getElementById('btnAutoPbr');
+  if (btn) btn.disabled = true;
+  window._setProgress('🎨 Đang phân tích vật liệu PBR (Vải, Da mặt, Kim loại, Normal Map)…', 15);
+  try {
+    const res = await window.pywebview.api.auto_perfect_glb_pbr();
+    if (res && res.success) {
+      if (res.glb_data) {
+        mv.src = res.glb_data;
+        lastGlbData = res.glb_data;
+      }
+      window._setProgress('✅ Hoàn tất! Mô hình đã được phủ bộ vật liệu PBR chuẩn Blender (Normal + Kim loại + Da mặt).', 100);
+    } else {
+      window._setProgress('❌ ' + (res ? res.error : 'Lỗi hoàn thiện PBR'), -1);
+    }
+  } catch (e) {
+    window._setProgress('❌ Lỗi: ' + e, -1);
   } finally {
     if (btn) btn.disabled = false;
   }
