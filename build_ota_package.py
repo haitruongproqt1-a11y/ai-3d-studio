@@ -11,6 +11,8 @@ version = v_data.get("version", "3.0.0")
 
 files_to_pack = [
     "app.py",
+    "birefnet_helper.py",
+    "idol_engine.py",
     "meshy_client.py",
     "hf_free_client.py",
     "texture_engine.py",

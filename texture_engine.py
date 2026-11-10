@@ -251,8 +251,12 @@ def extract_dual_masks(img_rgb, pil_img, orig_alpha=None):
                 if np.min(arr_a) < 200 and np.any(arr_a > 50):
                     alpha = arr_a
             if alpha is None:
-                import rembg
-                clean_rgba = rembg.remove(pil_img)
+                try:
+                    from birefnet_helper import remove_background_birefnet
+                    clean_rgba = remove_background_birefnet(pil_img)
+                except Exception:
+                    import rembg
+                    clean_rgba = rembg.remove(pil_img)
                 arr = np.array(clean_rgba)
                 if arr.shape[2] == 4:
                     alpha = arr[:, :, 3]

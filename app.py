@@ -41,7 +41,7 @@ from hf_free_client import HuggingFaceFreeClient
 
 logging.basicConfig(level=logging.INFO)
 
-APP_VERSION = "v3.1.2"
+APP_VERSION = "v3.2.0"
 DEFAULT_GITHUB_REPO = "haitruongproqt1-a11y/ai-3d-studio"
 OUTPUT_DIR = os.path.join(APP_DIR, "output_app")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -955,13 +955,17 @@ class AppApi:
 
     # ── image preprocessing ──────────────────────────────────────────────────
     def _preprocess(self, file_path: str) -> Image.Image:
-        self._progress("🤖 AI đang phân đoạn & tách nền u2net…", 10)
+        self._progress("🛡️ AI BiRefNet đang phân đoạn & bảo toàn chi tiết mảnh 100%…", 10)
         orig = Image.open(file_path).convert("RGB")
         try:
-            clean_rgba = rembg.remove(orig)
+            from birefnet_helper import remove_background_birefnet
+            clean_rgba = remove_background_birefnet(orig)
         except Exception as e:
-            logging.warning(f"rembg remove warning: {e}")
-            clean_rgba = remove_background(orig)
+            logging.warning(f"birefnet remove warning: {e}")
+            try:
+                clean_rgba = rembg.remove(orig)
+            except Exception:
+                clean_rgba = remove_background(orig)
         fg = resize_foreground(clean_rgba, 0.85)
         arr = np.array(fg).astype(np.float32) / 255.0
         arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
@@ -978,11 +982,15 @@ class AppApi:
                 clean_rgba = orig
         if clean_rgba is None:
             try:
-                os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
-                clean_rgba = rembg.remove(orig)
+                from birefnet_helper import remove_background_birefnet
+                clean_rgba = remove_background_birefnet(orig)
             except Exception as e:
-                logging.warning(f"rembg remove warning: {e}")
-                clean_rgba = remove_background(orig.convert("RGB"))
+                logging.warning(f"birefnet remove warning: {e}")
+                try:
+                    os.environ["U2NET_HOME"] = os.path.join(CACHE_DIR, "u2net")
+                    clean_rgba = rembg.remove(orig)
+                except Exception:
+                    clean_rgba = remove_background(orig.convert("RGB"))
 
         if clean_rgba.mode != "RGBA":
             clean_rgba = clean_rgba.convert("RGBA")
@@ -1101,6 +1109,12 @@ class AppApi:
                     concept_file, enable_pbr=(color_mode != "clay"),
                     target_dir=item_dir, task_id=task_id, color_mode=color_mode
                 )
+            elif engine == "idol":
+                self._progress("🔮 Đưa hình phác họa vào IDOL 3D Cloud Free (Speridlabs 3DGS)…", 28, task_id=task_id)
+                res = self._gen_idol_cloud(
+                    concept_file, num_steps=num_steps,
+                    target_dir=item_dir, task_id=task_id, color_mode=color_mode
+                )
             elif engine == "hffree":
                 self._progress("🌐 Đưa hình phác họa vào Hugging Face Cloud Free tái tạo 3D…", 28, task_id=task_id)
                 res = self._gen_hf_free_cloud(
@@ -1158,6 +1172,12 @@ class AppApi:
 
         if engine == "meshy":
             return self._gen_meshy_cloud(file_path, enable_pbr=(color_mode != "clay"), color_mode=color_mode, task_id=task_id)
+        if engine == "idol":
+            g_val = str(octree_res) if str(octree_res) in ("65,536", "131,072", "262,144", "524,288") else "131,072"
+            return self._gen_idol_cloud(
+                file_path, num_steps=num_steps, gaussians=g_val,
+                color_mode=color_mode, task_id=task_id
+            )
         if engine == "hffree":
             return self._gen_hf_free_cloud(
                 file_path, num_steps=num_steps, octree_res=octree_res,
@@ -1535,6 +1555,78 @@ class AppApi:
         except Exception as e:
             logging.exception("_gen_meshy_cloud error")
             return {"success": False, "error": f"Lỗi Meshy AI Cloud: {e}"}
+
+    # ── ENGINE 5: SPERIDLABS IDOL 3D CLOUD FREE (3D GAUSSIAN SPLATTING 0đ) ──
+    def _gen_idol_cloud(self, file_path, num_steps=30, gaussians="131,072", target_dir=None, task_id=None, color_mode="color"):
+        self._progress("🔮 Đang khởi động siêu động cơ Speridlabs IDOL 3D (3D Gaussian Splatting)…", 10, task_id=task_id)
+        try:
+            if target_dir:
+                item_dir = target_dir
+            else:
+                ts = int(time.time())
+                item_dir = os.path.join(OUTPUT_DIR, f"idol_{ts}")
+            os.makedirs(item_dir, exist_ok=True)
+
+            input_png_path = os.path.join(item_dir, "input.png")
+            from birefnet_helper import remove_background_birefnet
+            im_orig = Image.open(file_path)
+            clean_im = remove_background_birefnet(im_orig)
+            clean_im.save(input_png_path)
+
+            token = self.config.get("hf_token", "")
+
+            def _step_cb(msg, pct):
+                self._progress(msg, pct, task_id=task_id)
+
+            from idol_engine import generate_idol_3d
+            res = generate_idol_3d(
+                input_png_path,
+                hf_token=token,
+                progress_cb=_step_cb,
+                item_dir=item_dir,
+                steps=int(num_steps) if num_steps else 30,
+                gaussians=gaussians,
+                mode="Real photo"
+            )
+
+            if not res.get("success"):
+                return res
+
+            glb_path = res["glb_path"]
+            obj_path = res.get("obj_path", "")
+            ply_path = res.get("ply_path", "")
+
+            self.last_glb = glb_path
+            self.last_obj = obj_path
+            self.last_ply = ply_path
+            self.last_folder = item_dir
+
+            eng_name = res.get("engine_used", "🔮 Speridlabs IDOL 3D (3DGS 0đ)")
+
+            _save_model_metadata(
+                item_dir,
+                name=os.path.splitext(os.path.basename(file_path))[0],
+                engine=eng_name,
+                source="image",
+                input_img_path=file_path
+            )
+
+            self._progress("✅ Hoàn tất! Mô hình 3D Gaussian Splatting sẵn sàng (100%).", 100, task_id=task_id)
+            with open(glb_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "success": True,
+                "glb_data": f"data:model/gltf-binary;base64,{b64}",
+                "glb_path": glb_path,
+                "obj_path": obj_path,
+                "ply_path": ply_path,
+                "folder": item_dir,
+                "engine_used": eng_name
+            }
+        except Exception as e:
+            logging.exception("_gen_idol_cloud error")
+            return {"success": False, "error": f"Lỗi Speridlabs IDOL 3D: {e}"}
 
     # ── ENGINE 4: HUGGING FACE FREE CLOUD (0 VNĐ API) ────────────────────────
     def _gen_hf_free_cloud(self, file_path, num_steps=15, octree_res=256, target_dir=None, task_id=None,
@@ -1972,7 +2064,16 @@ class AppApi:
             return {"success": False, "error": str(e)}
 
     def export_file(self, file_type="glb"):
-        src = self.last_glb if file_type == "glb" else self.last_obj
+        if file_type == "ply":
+            src = getattr(self, "last_ply", "")
+            if not src or not os.path.exists(src):
+                cand = os.path.join(self.last_folder, "model.ply") if self.last_folder else ""
+                if cand and os.path.exists(cand):
+                    src = cand
+            if not src or not os.path.exists(src):
+                return {"success": False, "error": "Chưa có file 3D Gaussian Splat (.ply). Vui lòng chọn Engine '🔮 IDOL 3D' để xuất file PLY!"}
+        else:
+            src = self.last_glb if file_type == "glb" else self.last_obj
         if not src or not os.path.exists(src):
             cand = os.path.join(self.last_folder, f"model.{file_type}") if self.last_folder else ""
             if cand and os.path.exists(cand):
@@ -2389,7 +2490,7 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
 <header>
   <div style="display:flex;align-items:center;gap:9px">
     <div class="logo"><span class="logo-chip">3D AI</span>AI 3D Studio</div>
-    <span class="ver" id="ver">v3.1.2</span>
+    <span class="ver" id="ver">v3.2.0</span>
   </div>
   <div class="hdr-right">
     <div class="gpu-pill"><div class="dot"></div><span id="gpuTxt">Đang nạp card GPU…</span></div>
@@ -2430,9 +2531,10 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     </div>
 
     <!-- 4 Engine tabs: Local Offline + Free Cloud + Meshy Pro -->
-    <div class="tabs" style="grid-template-columns: repeat(4, 1fr); gap: 4px;">
+    <div class="tabs" style="grid-template-columns: repeat(5, 1fr); gap: 4px;">
       <button class="tab turbo on" id="tabTurbo" onclick="setMode('turbo')" title="NVIDIA RTX 3050 Offline 100% - Không tốn tiền, không giới hạn, Khớp 1:1">🐉 RTX Đẳng Cấp</button>
-      <button class="tab hffree" id="tabHfFree" onclick="setMode('hffree')" title="Tạo trên Hugging Face Cloud Free ZeroGPU (0đ API)">🌐 Cloud Free (0đ)</button>
+      <button class="tab idol" id="tabIdol" onclick="setMode('idol')" style="color:#c084fc;border-color:rgba(192,132,252,0.4)" title="Speridlabs IDOL - 3D Gaussian Splatting quang học siêu thực từ 1 ảnh (0đ Cloud Free)">🔮 IDOL 3D</button>
+      <button class="tab hffree" id="tabHfFree" onclick="setMode('hffree')" title="Tạo trên Hugging Face Cloud Free ZeroGPU (0đ API)">🌐 Cloud Free</button>
       <button class="tab" id="tabTripoSR" onclick="setMode('triposr')" title="TripoSR Siêu tốc ~15 giây Offline">⚡ RTX Siêu Tốc</button>
       <button class="tab meshy" id="tabMeshy" onclick="setMode('meshy')" title="Meshy.ai Cloud (Yêu cầu có Credit Meshy)">✨ Meshy Pro</button>
     </div>
@@ -2516,6 +2618,39 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
     <div class="info-card">
       <span class="ic-title" id="icTitle">🐉 RTX Đẳng Cấp – Tencent Hunyuan3D-2 Turbo (Offline 100%)</span>
       <span class="ic-desc" id="icDesc">Kiến trúc DiT Flow Matching + Động cơ UV Dual-View mới: <b>Khớp chuẩn 1:1 khuôn mặt & chi tiết, tự động khử loang lổ 360° mặt sau</b>, hoàn toàn miễn phí không giới hạn.</span>
+    </div>
+
+    <!-- Speridlabs IDOL 3D Cloud Settings -->
+    <div id="idolSet" style="display:none">
+      <div class="sg" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <label>Mô hình: Speridlabs IDOL (3DGS DiT):</label>
+          <button class="tag-btn" onclick="openHfTokenModal()" style="font-size:10px;padding:2px 7px">🌐 HF Token</button>
+        </div>
+        <div style="font-size:11px;color:#cbd5e1;background:#1a0f2e;padding:7px 9px;border-radius:6px;border:1px solid #7c3aed;display:flex;align-items:center;justify-content:space-between">
+          <span>🔮 3D Gaussian Splatting quang học 0đ qua ZeroGPU</span>
+        </div>
+      </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Mật độ hạt 3D Gaussians:</label>
+        <select id="idolGaussians">
+          <option value="131,072" selected>✨ 131,072 Gaussians – Nhanh & Rõ nét (Khuyên dùng)</option>
+          <option value="65,536">⚡ 65,536 Gaussians – Siêu tốc ~15s</option>
+          <option value="262,144">💎 262,144 Gaussians – Độ chi tiết quang học cực cao</option>
+          <option value="524,288">👑 524,288 Gaussians – Mật độ tối đa (Studio Grade)</option>
+        </select>
+      </div>
+      <div class="sg" style="margin-bottom:7px">
+        <label>Chế độ ảnh đầu vào:</label>
+        <select id="idolMode">
+          <option value="Real photo" selected>📸 Ảnh chụp thực tế (Real Photo)</option>
+          <option value="Synthetic">🎨 Đồ vật / Vũ khí / Render 3D (Synthetic)</option>
+        </select>
+      </div>
+      <div class="chk-row" style="margin-bottom:6px">
+        <input type="checkbox" id="chkIdolBiref" checked disabled>
+        <label class="chk-row" for="chkIdolBiref">🛡️ Tự động tách nền BiRefNet (Bảo toàn 100% lưỡi kiếm & chi tiết mảnh)</label>
+      </div>
     </div>
 
     <!-- Hugging Face Free Cloud Settings -->
@@ -2659,6 +2794,9 @@ model-viewer{width:100%;height:100%;--poster-color:transparent;position:relative
         </button>
         <button class="btn-act ready" id="btnObj" onclick="doExport('obj')" title="Lưu định dạng OBJ cho Blender/Maya">
           📦 Lưu OBJ
+        </button>
+        <button class="btn-act ready" id="btnPly" onclick="doExport('ply')" style="background:linear-gradient(135deg,#7c3aed,#9333ea);color:#fff;border-color:#a855f7" title="Lưu định dạng 3D Gaussian Splatting PLY (cho Blender / UE5 / SuperSplat)">
+          🔮 Lưu PLY (3DGS)
         </button>
         <button class="btn-act ready" id="btnDir" onclick="openDir()" title="Mở thư mục chứa file đã tạo">
           📁 Mở thư mục
@@ -3274,10 +3412,12 @@ function setMode(m) {
   curMode = m;
   document.getElementById('tabMeshy').classList.remove('on');
   document.getElementById('tabTurbo').classList.remove('on');
+  document.getElementById('tabIdol').classList.remove('on');
   document.getElementById('tabTripoSR').classList.remove('on');
   document.getElementById('tabHfFree').classList.remove('on');
   document.getElementById('meshySet').style.display = 'none';
   document.getElementById('turboSet').style.display = 'none';
+  document.getElementById('idolSet').style.display = 'none';
   document.getElementById('triposrSet').style.display = 'none';
   document.getElementById('hffreeSet').style.display = 'none';
 
@@ -3289,7 +3429,14 @@ function setMode(m) {
   if (bar) bar.style.width = '0%';
   if (spin) spin.style.display = 'none';
 
-  if (m === 'meshy') {
+  if (m === 'idol') {
+    document.getElementById('tabIdol').classList.add('on');
+    document.getElementById('idolSet').style.display = '';
+    document.getElementById('icTitle').textContent = '🔮 Speridlabs IDOL 3D – 3D Gaussian Splatting (0đ Miễn Phí)';
+    document.getElementById('icDesc').innerHTML = 'Công nghệ 3D Gaussian Splatting quang học thế hệ mới từ Speridlabs. <b>Tự động bóc tách nền BiRefNet</b>, suy luận trường xạ 360° chân thực và xuất file <b>.PLY + .GLB</b>.';
+    updateHfTokenUi();
+    if (progTxt) progTxt.innerHTML = '<span style="color:#c084fc;font-weight:600">🔮 Đã chọn Speridlabs IDOL (3DGS 0đ). Bấm nút bên dưới để tạo!</span>';
+  } else if (m === 'meshy') {
     document.getElementById('tabMeshy').classList.add('on');
     document.getElementById('meshySet').style.display = '';
     document.getElementById('icTitle').textContent = '✨ Meshy.ai Cloud – Siêu Máy Tính GPU A100 (Chất Lượng Hoàn Hảo 100%)';
@@ -3622,9 +3769,16 @@ async function generate() {
 
   try {
     const prompt = (curSource === 'text') ? document.getElementById('promptInput').value.trim() : '';
+    let effSteps = numSteps;
+    let effRes = octreeRes;
+    if (curMode === 'idol') {
+      const gSel = document.getElementById('idolGaussians');
+      if (gSel) effRes = gSel.value;
+      effSteps = 30;
+    }
     const startRes = (curSource === 'text')
-      ? await window.pywebview.api.start_generate_from_text(prompt, curMode, quality, smooth, numSteps, octreeRes, curStyle)
-      : await window.pywebview.api.start_generate_3d(targetImg, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality, numSteps, octreeRes, backImg, leftImg, rightImg, curStyle);
+      ? await window.pywebview.api.start_generate_from_text(prompt, curMode, quality, smooth, effSteps, effRes, curStyle)
+      : await window.pywebview.api.start_generate_3d(targetImg, curMode, 'auto', (quality === 'pbr_1024'), smooth, quality, effSteps, effRes, backImg, leftImg, rightImg, curStyle);
 
     if (!startRes || !startRes.task_id) {
       window._setProgress('❌ Không thể khởi tạo tác vụ: ' + (startRes && startRes.error ? startRes.error : 'Lỗi không xác định'), -1);

@@ -247,8 +247,12 @@ class HuggingFaceFreeClient:
                 cache_u2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", "u2net")
                 if os.path.exists(cache_u2):
                     os.environ["U2NET_HOME"] = cache_u2
-                import rembg
-                clean_rgba = rembg.remove(orig)
+                try:
+                    from birefnet_helper import remove_background_birefnet
+                    clean_rgba = remove_background_birefnet(orig)
+                except Exception:
+                    import rembg
+                    clean_rgba = rembg.remove(orig)
             except Exception as e_rem:
                 logging.warning(f"HF Free local rembg notice: {e_rem}")
                 try:

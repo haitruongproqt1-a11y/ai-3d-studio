@@ -18,3 +18,8 @@ config.json
 img2threejs/
 diag_test.py
 full_api_test.py
+ 
+MODEL 3D*
+update_v*
+latest_ota_package.zip
+*.zip
